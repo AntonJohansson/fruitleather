@@ -1,0 +1,9 @@
+[ ] vectors [1 2 3 4]
+[ ] matrices [1 2; 3 4]
+[ ] bin ops
+    [ ] + -
+    [ ] * /
+    [ ] ^ _
+    [ ] chaining
+[ ] functions
+[ ] binary operators of different return type
