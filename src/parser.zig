@@ -26,18 +26,45 @@ pub const AstTypeDecl = struct {
     latex_string: usize,
 };
 
+pub const AstMatrix = struct {
+    bracket: usize,
+};
+
+pub const AstBinOp = struct {
+    op: usize,
+    num_args_in_subtree: u32,
+};
+
+pub const AstHeader = struct {
+    depth: u32,
+};
+
+pub const AstCode = struct {
+    small: bool,
+};
+
 pub const AstType = union(enum) {
     var_name: usize,
     number: usize,
     var_decl:  AstVarDecl,
     type_decl: AstTypeDecl,
     op_decl: AstOpDecl,
-    bin_op: usize,
+    bin_op: AstBinOp,
+    unary_op: usize,
+    call_op: usize,
+    mat: AstMatrix,
+    sum: usize,
+    prod: usize,
+    text: usize,
+    code: AstCode,
+    header: AstHeader,
 };
 
 pub const AstNode = struct {
     ast_type: AstType,
-    children: std.BoundedArray(*AstNode, 4),
+    aligned: bool = false,
+    typeindex: usize = 0,
+    children: std.BoundedArray(*AstNode, 16),
 };
 
 pub const ParseError = std.mem.Allocator.Error || error {
@@ -53,7 +80,7 @@ pub const ParseState = struct {
     filebuf: []const u8,
     filename: []const u8,
 
-    fn hasNTokens(state: *ParseState, comptime N: usize) bool {
+    fn hasNTokens(state: *ParseState, N: usize) bool {
         return state.top + (N-1) < state.buffer.tokens.items.len;
     }
 
@@ -62,9 +89,25 @@ pub const ParseState = struct {
     }
 
     fn expect(state: *ParseState, token: lexer.Token) ParseError!usize {
-        const t = try state.peek();
-        if (t != token)
+        const t = state.peek() catch {
+            const index = if (state.top > 0) state.top - 1 else 0;
+            log.errAtFmt(state.filename, state.filebuf,
+                state.buffer.locations.items[index].start,
+                "Out of tokens",
+                "Expected expression to end in {}",
+                .{token}
+            );
             return error.TokenMismatch;
+        };
+        if (t != token) {
+            log.errAtFmt(state.filename, state.filebuf,
+                state.buffer.locations.items[state.top].start,
+                "Token mismatch",
+                "Expected {}, got {}",
+                .{token, t}
+            );
+            return error.TokenMismatch;
+        }
         return state.pop();
     }
 
@@ -74,7 +117,7 @@ pub const ParseState = struct {
         return result;
     }
 
-    fn peekAmount(state: *ParseState, comptime amount: usize) ParseError!lexer.Token {
+    fn peekAmount(state: *ParseState, amount: usize) ParseError!lexer.Token {
         if (!state.hasNTokens(amount))
             return error.OutOfTokens;
         return state.buffer.tokens.items[state.top + (amount-1)];
@@ -97,18 +140,27 @@ pub const ParseState = struct {
         return result;
     }
 
-    fn matchOr(state: *ParseState, comptime tokens: []const lexer.Token) ParseError!usize {
-        const current_token = try state.peek();
-        inline for (tokens) |t| {
-            if (current_token == t)
-                return state.pop();
-        }
+    fn matchOrAndPop(state: *ParseState, comptime tokens: []const lexer.Token) ParseError!usize {
+        if (try state.matchOrOffset(1, tokens))
+            return state.pop();
         return error.TokenMismatch;
     }
 
+    fn matchOrOffset(state: *ParseState, offset: usize, comptime tokens: []const lexer.Token) ParseError!bool {
+        const current_token = try state.peekAmount(offset);
+        inline for (tokens) |t| {
+            if (current_token == t)
+                return true;
+        }
+        return false;
+    }
+
+
     fn makeNode(state: *ParseState) ParseError!*AstNode {
         var node = try state.allocator.create(AstNode);
-        node.children = try std.BoundedArray(*AstNode, 4).init(0);
+        node.aligned = false;
+        node.typeindex = 0;
+        node.children = try std.BoundedArray(*AstNode, 16).init(0);
         return node;
     }
 };
@@ -116,6 +168,10 @@ pub const ParseState = struct {
 pub fn parse(state: *ParseState) ParseError!std.ArrayList(*AstNode) {
     var statement_list = std.ArrayList(*AstNode).init(state.allocator);
     while (state.hasTokens()) {
+        while (state.hasTokens() and (try state.peek()) == .Newline)
+            _ = try state.pop();
+        if (!state.hasTokens())
+            break;
         const statement = try parseStatement(state);
         try statement_list.append(statement);
     }
@@ -124,12 +180,89 @@ pub fn parse(state: *ParseState) ParseError!std.ArrayList(*AstNode) {
 
 fn parseStatement(state: *ParseState) ParseError!*AstNode {
     const token = try state.peek();
-    switch (token) {
-        .Type => return parseTypeDecl(state),
-        .Var  => return parseVarDecl(state),
-        .Op   => return parseOpDecl(state),
-        else  => return parseExpression(state),
+    var node = switch (token) {
+        .Header => parseHeader(state),
+        .Text => parseText(state),
+        .SmallCode => parseSmallCode(state),
+        .BigCode => parseBigCode(state),
+        else => return error.TokenMismatch,
+    };
+    return node;
+}
+
+fn parseHeader(state: *ParseState) ParseError!*AstNode {
+    _ = try state.expect(.Header);
+    const text = try parseText(state);
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .header = AstHeader {
+            .depth = 1,
+        },
+    };
+    try node.children.append(text);
+    return node;
+}
+
+fn parseText(state: *ParseState) ParseError!*AstNode {
+    const i = try state.expect(.Text);
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .text = i,
+    };
+    return node;
+}
+
+fn parseSmallCode(state: *ParseState) ParseError!*AstNode {
+    const i = try state.expect(.SmallCode);
+
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .code = AstCode {
+            .small = true,
+        },
+    };
+
+    const token = try state.peek();
+    var code = switch (token) {
+        .Type => try parseTypeDecl(state),
+        .Var  => try parseVarDecl(state),
+        .Op   => try parseOpDecl(state),
+        else  => try parseExpression(state),
+    };
+    try node.children.append(code);
+
+    _ = try state.expect(state.buffer.tokens.items[i]);
+
+    return node;
+}
+
+
+fn parseBigCode(state: *ParseState) ParseError!*AstNode {
+    const i = try state.expect(.BigCode);
+
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .code = AstCode {
+            .small = false,
+        },
+    };
+
+    while (true) {
+        const token = try state.peek();
+        var code = switch (token) {
+            .BigCode => break,
+            .Type => try parseTypeDecl(state),
+            .Var  => try parseVarDecl(state),
+            .Op   => try parseOpDecl(state),
+            else  => try parseExpression(state),
+        };
+        _ = try state.expect(.Semicolon);
+        try node.children.append(code);
     }
+
+    _ = try state.expect(state.buffer.tokens.items[i]);
+
+    return node;
 }
 
 fn parseNumber(state: *ParseState) ParseError!*AstNode {
@@ -153,14 +286,30 @@ fn parseIdentifier(state: *ParseState) ParseError!*AstNode {
 fn parseBinOpExpansion(state: *ParseState, comptime op_tokens: []const lexer.Token, parse_op: fn (*ParseState) ParseError!*AstNode) ParseError!*AstNode {
     var a = try parse_op(state);
 
+    var num_bin_ops: u32 = 0;
+
     while (true) {
-        const op = state.matchOr(op_tokens) catch break;
+        const op_or_align = try state.peek();
+        const has_align = if (op_or_align == .Align) true else false;
+        const op_offset: usize = if (has_align) 2 else 1;
+        const has_op = state.matchOrOffset(op_offset, op_tokens) catch break;
+        if (!has_op)
+            break;
+        if (has_align)
+            _ = try state.pop();
+        const op = try state.pop();
         const b = try parse_op(state);
+
+        num_bin_ops += 1;
 
         var node = try state.makeNode();
         node.ast_type = AstType {
-            .bin_op = op,
+            .bin_op = AstBinOp {
+                .op = op,
+                .num_args_in_subtree = num_bin_ops + 1,
+            },
         };
+        node.aligned = has_align;
         try node.children.append(a);
         try node.children.append(b);
 
@@ -170,12 +319,120 @@ fn parseBinOpExpansion(state: *ParseState, comptime op_tokens: []const lexer.Tok
     return a;
 }
 
+fn parseCall(state: *ParseState) ParseError!*AstNode {
+    const iden = try state.pop();
+    _ = try state.expect(.LeftParen);
+    const expr = try parseBinOpExpansion(state, &.{.Comma}, parseEqual);
+    _ = try state.expect(.RightParen);
+
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .call_op = iden,
+    };
+    try node.children.append(expr);
+
+    return node;
+}
+
+fn parseComma(state: *ParseState) ParseError!*AstNode {
+    return try parseBinOpExpansion(state, &.{.Comma}, parseAdd);
+}
+
+pub fn getMatchingParen(state: *ParseState, index: usize) !lexer.Token {
+    switch (state.buffer.tokens.items[index]) {
+        .LeftParen         => return .RightParen,
+        .LeftBracket       => return .RightBracket,
+        .LeftAngleBracket  => return .RightAngleBracket,
+        .LeftBrace         => return .RightBrace,
+        .RightParen        => return .LeftParen,
+        .RightBracket      => return .LeftBracket,
+        .RightAngleBracket => return .LeftAngleBracket,
+        .RightBrace        => return .LeftBrace,
+        else               => return error.TokenMismatch,
+    }
+}
+
+fn parseVectorOrMatrix(state: *ParseState) ParseError!*AstNode {
+    const open_paren = try state.matchOrAndPop(&.{.LeftBracket, .LeftAngleBracket, .LeftBrace});
+    const row = try parseBinOpExpansion(state, &.{.Semicolon}, parseComma);
+    _ = try state.expect(try getMatchingParen(state, open_paren));
+
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .mat = AstMatrix {
+            .bracket = open_paren,
+        },
+    };
+    try node.children.append(row);
+
+    return node;
+}
+
+fn parseSum(state: *ParseState) ParseError!*AstNode {
+    const op = try state.expect(.Sum);
+    _ = try state.expect(.LeftParen);
+    const arg = try parseComma(state);
+    _ = try state.expect(.RightParen);
+    _ = try state.expect(.LeftBrace);
+    const exp = try parseAdd(state);
+    _ = try state.expect(.RightBrace);
+
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .sum = op,
+    };
+    try node.children.append(arg);
+    try node.children.append(exp);
+
+    return node;
+}
+
+fn parseProd(state: *ParseState) ParseError!*AstNode {
+    const op = try state.expect(.Prod);
+    _ = try state.expect(.LeftParen);
+    const arg = try parseComma(state);
+    _ = try state.expect(.RightParen);
+    _ = try state.expect(.LeftBrace);
+    const exp = try parseAdd(state);
+    _ = try state.expect(.RightBrace);
+
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .prod = op,
+    };
+    try node.children.append(arg);
+    try node.children.append(exp);
+
+    return node;
+}
+
 fn parsePrimary(state: *ParseState) ParseError!*AstNode {
-    const t = try state.peek();
-    if (t == .Identifier) {
-        return try parseIdentifier(state);
-    } else if (t == .Number) {
+    const t0 = try state.peek();
+    if (t0 == .Identifier) {
+        const t1 = state.peekAmount(2) catch {
+            return try parseIdentifier(state);
+        };
+
+        if (t1 == .LeftParen) {
+            return try parseCall(state);
+        } else {
+            return try parseIdentifier(state);
+        }
+    } else if (t0 == .LeftBracket or
+               t0 == .LeftAngleBracket or
+               t0 == .LeftBrace) {
+        return try parseVectorOrMatrix(state);
+    } else if (t0 == .Number) {
         return try parseNumber(state);
+    } else if (t0 == .LeftParen) {
+        _ = try state.expect(.LeftParen);
+        const expr = try parseAdd(state);
+        _ = try state.expect(.RightParen);
+        return expr;
+    } else if (t0 == .Sum) {
+        return try parseSum(state);
+    } else if (t0 == .Prod) {
+        return try parseProd(state);
     } else {
         log.errAt(state.filename, state.filebuf,
             state.buffer.locations.items[state.top].start,
@@ -186,12 +443,24 @@ fn parsePrimary(state: *ParseState) ParseError!*AstNode {
     }
 }
 
-//fn parseUnary(state: *ParseState) ParseError!*AstNode {
-//    return try parseBinOpExpansion(state, &.{.Equal}, parsePrimary);
-//}
+fn parseUnary(state: *ParseState) ParseError!*AstNode {
+    const op = state.matchOrAndPop(&.{.Add, .Sub}) catch {
+        return try parsePrimary(state);
+    };
+
+    const primary = try parsePrimary(state);
+
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .unary_op = op,
+    };
+    try node.children.append(primary);
+
+    return node;
+}
 
 fn parsePower(state: *ParseState) ParseError!*AstNode {
-    return try parseBinOpExpansion(state, &.{.Superscript, .Subscript}, parsePrimary);
+    return try parseBinOpExpansion(state, &.{.Superscript, .Subscript}, parseUnary);
 }
 
 fn parseMul(state: *ParseState) ParseError!*AstNode {
@@ -202,22 +471,20 @@ fn parseAdd(state: *ParseState) ParseError!*AstNode {
     return try parseBinOpExpansion(state, &.{.Add, .Sub}, parseMul);
 }
 
+fn parseIn(state: *ParseState) ParseError!*AstNode {
+    return parseBinOpExpansion(state, &.{.In}, parseAdd);
+}
+
 fn parseEqual(state: *ParseState) ParseError!*AstNode {
-    return try parseBinOpExpansion(state, &.{.Equal}, parseAdd);
+    return try parseBinOpExpansion(state, &.{.Equal, .LeftAngleBracket, .RightAngleBracket, .LessThanEqual, .GreaterThanEqual}, parseIn);
+}
+
+fn parseArrows(state: *ParseState) ParseError!*AstNode {
+    return try parseBinOpExpansion(state, &.{.RightImp, .LeftImp, .Eqv}, parseEqual);
 }
 
 fn parseExpression(state: *ParseState) ParseError!*AstNode {
-    const token = try state.peek();
-    if (token == .Identifier) {
-        const next_token = try state.peekAmount(2);
-        if (next_token == .Equal) {
-            return parseEqual(state);
-        } else {
-            return parseIdentifier(state);
-        }
-    }
-
-    return error.TokenMismatch;
+    return try parseBinOpExpansion(state, &.{.Comma}, parseArrows);
 }
 
 fn parseArgs(state: *ParseState) ParseError!*AstNode {
@@ -276,7 +543,7 @@ fn parseOpArgs(state: *ParseState) ParseError!*AstNode {
 fn parseOpDecl(state: *ParseState) ParseError!*AstNode {
     _ = try state.expect(.Op);
 
-    const op = try state.matchOr(&.{.Add, .Sub, .Mul, .Div});
+    const op = try state.matchOrAndPop(&.{.Add, .Sub, .Mul, .Div, .Superscript});
 
     _ = try state.expect(.LeftParen);
     const args = try parseOpArgs(state);

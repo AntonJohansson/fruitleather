@@ -14,6 +14,7 @@ pub fn build(b: *std.build.Builder) void {
     const exe = b.addExecutable("fl", "src/main.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
+    exe.addPackagePath("ziglyph", "libs/ziglyph/src/ziglyph.zig");
     exe.install();
 
     const run_cmd = exe.run();

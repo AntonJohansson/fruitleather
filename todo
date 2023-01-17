@@ -1,9 +1,18 @@
-[ ] vectors [1 2 3 4]
-[ ] matrices [1 2; 3 4]
-[ ] bin ops
-    [ ] + -
-    [ ] * /
-    [ ] ^ _
-    [ ] chaining
-[ ] functions
 [ ] binary operators of different return type
+    - op *(a: DifferentialForm, b: DifferentialForm) -> DifferentialNForm
+[ ] integrals
+[ ] sqrt
+[ ] Deal with greek letters
+[ ] when to print (...) for bracketed expressions?
+    - "(a + b)^2" gets emitted as "a + b^2"
+    - Maybe if a binary operator ^ of high presedence has operands
+      which in turn are binary expressions of lower presedence
+[ ] custom function(al) like expressions sum/prod/int, define in language instead?
+[ ] custom binary operators?
+    - Define +-*/^_ in language?
+[ ] newline and alignment in equations
+[ ] labeling equations
+[ ] proof/theorem/remark
+[ ] images?
+[ ] tables?
+[ ] period/comma after equations
