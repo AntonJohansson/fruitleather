@@ -170,6 +170,10 @@ fn setSubtreeTypes(state: *parser.ParseState, node: *parser.AstNode, ast_types: 
             // Depends on type of factor and ops on this type
             _ = setSubtreeTypes(state, node.children.get(1), ast_types);
         },
+        .int => {
+            // Depends on type of factor and ops on this type
+            _ = setSubtreeTypes(state, node.children.get(1), ast_types);
+        },
         .call_op => {
             // ?
             _ = setSubtreeTypes(state, node.children.get(0), ast_types);
@@ -346,7 +350,64 @@ fn dumpStatementsToLatex(state: *parser.ParseState, filename: []const u8, statem
     try writer.writeAll("\\end{document}\n");
 }
 
+fn mapLatexVarName(name: []const u8) []const u8 {
+    if      (std.mem.eql(u8, name, "alpha"))   {return "\\alpha";}
+    else if (std.mem.eql(u8, name, "beta"))    {return "\\beta";}
+    else if (std.mem.eql(u8, name, "gamma"))   {return "\\gamma";}
+    else if (std.mem.eql(u8, name, "delta"))   {return "\\delta";}
+    else if (std.mem.eql(u8, name, "epsilon")) {return "\\epsilon";}
+    else if (std.mem.eql(u8, name, "zeta"))    {return "\\zeta";}
+    else if (std.mem.eql(u8, name, "eta"))     {return "\\eta";}
+    else if (std.mem.eql(u8, name, "theta"))   {return "\\theta";}
+    else if (std.mem.eql(u8, name, "iota"))    {return "\\iota";}
+    else if (std.mem.eql(u8, name, "kappa"))   {return "\\kappa";}
+    else if (std.mem.eql(u8, name, "lambda"))  {return "\\lambda";}
+    else if (std.mem.eql(u8, name, "mu"))      {return "\\mu";}
+    else if (std.mem.eql(u8, name, "nu"))      {return "\\nu";}
+    else if (std.mem.eql(u8, name, "xi"))      {return "\\xi";}
+    else if (std.mem.eql(u8, name, "omicron")) {return "\\omicron";}
+    else if (std.mem.eql(u8, name, "pi"))      {return "\\pi";}
+    else if (std.mem.eql(u8, name, "sigma"))   {return "\\sigma";}
+    else if (std.mem.eql(u8, name, "tau"))     {return "\\tau";}
+    else if (std.mem.eql(u8, name, "upsilon")) {return "\\upsilon";}
+    else if (std.mem.eql(u8, name, "chi"))     {return "\\chi";}
+    else if (std.mem.eql(u8, name, "phi"))     {return "\\phi";}
+    else if (std.mem.eql(u8, name, "psi"))     {return "\\psi";}
+    else if (std.mem.eql(u8, name, "omega"))   {return "\\omega";}
+    else if (std.mem.eql(u8, name, "Alpha"))   {return "\\Alpha";}
+    else if (std.mem.eql(u8, name, "Beta"))    {return "\\Beta";}
+    else if (std.mem.eql(u8, name, "Gamma"))   {return "\\Gamma";}
+    else if (std.mem.eql(u8, name, "Delta"))   {return "\\Delta";}
+    else if (std.mem.eql(u8, name, "Epsilon")) {return "\\Epsilon";}
+    else if (std.mem.eql(u8, name, "Zeta"))    {return "\\Zeta";}
+    else if (std.mem.eql(u8, name, "Eta"))     {return "\\Eta";}
+    else if (std.mem.eql(u8, name, "Theta"))   {return "\\Theta";}
+    else if (std.mem.eql(u8, name, "Iota"))    {return "\\Iota";}
+    else if (std.mem.eql(u8, name, "Kappa"))   {return "\\Kappa";}
+    else if (std.mem.eql(u8, name, "Lambda"))  {return "\\Lambda";}
+    else if (std.mem.eql(u8, name, "Mu"))      {return "\\Mu";}
+    else if (std.mem.eql(u8, name, "Nu"))      {return "\\Nu";}
+    else if (std.mem.eql(u8, name, "Xi"))      {return "\\Xi";}
+    else if (std.mem.eql(u8, name, "Omicron")) {return "\\Omicron";}
+    else if (std.mem.eql(u8, name, "Pi"))      {return "\\Pi";}
+    else if (std.mem.eql(u8, name, "Sigma"))   {return "\\Sigma";}
+    else if (std.mem.eql(u8, name, "Tau"))     {return "\\Tau";}
+    else if (std.mem.eql(u8, name, "Upsilon")) {return "\\Upsilon";}
+    else if (std.mem.eql(u8, name, "Chi"))     {return "\\Chi";}
+    else if (std.mem.eql(u8, name, "Phi"))     {return "\\Phi";}
+    else if (std.mem.eql(u8, name, "Psi"))     {return "\\Psi";}
+    else if (std.mem.eql(u8, name, "Omega"))   {return "\\Omega";}
+    else                                       {return name;}
+}
+
 fn dumpExpression(parse_state: *parser.ParseState, writer: std.fs.File.Writer, buf: []const u8, ast_types: AstTypes, node: *parser.AstNode, in_mat: bool) std.fs.File.Writer.Error!void {
+    if (node.ast_type != .bin_op) {
+        if (node.has_newline)
+            try writer.writeAll(" \\\\\n\t ");
+        if (node.has_align)
+            try writer.writeAll(" & ");
+    }
+
     switch (node.ast_type) {
         .header => {
             switch (node.ast_type.header.depth) {
@@ -363,7 +424,7 @@ fn dumpExpression(parse_state: *parser.ParseState, writer: std.fs.File.Writer, b
                 try writer.writeAll("$");
             } else {
                 try writer.writeAll("\n");
-                try writer.writeAll("\\begin{align}\n");
+                try writer.writeAll("\\begin{align*}\n");
                 try writer.writeAll("\t");
             }
             for (node.children.constSlice()) |child,i| {
@@ -375,7 +436,7 @@ fn dumpExpression(parse_state: *parser.ParseState, writer: std.fs.File.Writer, b
                 try writer.writeAll("$");
             } else {
                 try writer.writeAll("\n");
-                try writer.writeAll("\\end{align}\n");
+                try writer.writeAll("\\end{align*}\n");
             }
         },
         .text => {
@@ -385,7 +446,7 @@ fn dumpExpression(parse_state: *parser.ParseState, writer: std.fs.File.Writer, b
         },
         .var_name => {
             const var_loc = parse_state.buffer.locations.items[node.ast_type.var_name];
-            const var_name = buf[var_loc.start..var_loc.end];
+            const var_name = mapLatexVarName(buf[var_loc.start..var_loc.end]);
             const typeindex = node.typeindex;
             if (typeindex == 0) {
                 try writer.print("{s}", .{var_name});
@@ -433,9 +494,14 @@ fn dumpExpression(parse_state: *parser.ParseState, writer: std.fs.File.Writer, b
                     .Div   => try writer.writeAll("\\frac{"),
                     else   => {},
                 }
+
                 try dumpExpression(parse_state, writer, buf, ast_types, childa, in_mat);
-                if (node.aligned)
-                    try writer.writeAll(" &");
+
+                if (node.has_newline)
+                    try writer.writeAll(" \\\\\n\t ");
+                if (node.has_align)
+                    try writer.writeAll(" & ");
+
                 switch (parse_state.buffer.tokens.items[node.ast_type.bin_op.op]) {
                     .Add         => try writer.writeAll(" + "),
                     .Sub         => try writer.writeAll(" - "),
@@ -514,9 +580,9 @@ fn dumpExpression(parse_state: *parser.ParseState, writer: std.fs.File.Writer, b
                     try writer.writeAll("\\right>");
                 },
                 .LeftBrace => {
-                    try writer.writeAll("\\left\\{");
+                    try writer.writeAll("\\Big\\{");
                     try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(0), false);
-                    try writer.writeAll("\\right\\}");
+                    try writer.writeAll("\\Big\\}");
                 },
                 else => return,
             }
@@ -559,6 +625,34 @@ fn dumpExpression(parse_state: *parser.ParseState, writer: std.fs.File.Writer, b
             }
             try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(1), in_mat);
         },
+        .int => |v| {
+            std.debug.print("{}\n", .{node.children.get(0).ast_type});
+            const num_args = if (node.children.get(0).ast_type == .bin_op)
+                node.children.get(0).ast_type.bin_op.num_args_in_subtree
+            else
+                1;
+
+
+            const token = parse_state.buffer.tokens.items[v];
+            if      (token == .Int1)  {try writer.writeAll("\\int_{");}
+            else if (token == .Int2)  {try writer.writeAll("\\iint_{");}
+            else if (token == .Int3)  {try writer.writeAll("\\iiint_{");}
+            else if (token == .Oint1) {try writer.writeAll("\\oint_{");}
+            else if (token == .Oint2) {try writer.writeAll("\\oiint_{");}
+            else if (token == .Oint3) {try writer.writeAll("\\oiiint_{");}
+            else                      {unreachable;}
+
+            if (num_args == 1) {
+                try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(0), in_mat);
+                try writer.writeAll("} ");
+            } else {
+                try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(0).children.get(0), in_mat);
+                try writer.writeAll("}^{");
+                try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(0).children.get(1), in_mat);
+                try writer.writeAll("} ");
+            }
+            try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(1), in_mat);
+        },
         .call_op => {
             const loc = parse_state.buffer.locations.items[node.ast_type.call_op];
             const op = buf[loc.start..loc.end];
@@ -595,6 +689,7 @@ fn dumpStatementsToDotImpl(state: *parser.ParseState, writer: std.fs.File.Writer
         .unary_op,
         .sum,
         .prod,
+        .int,
         .text,
         .number => |i| {
             const loc = state.buffer.locations.items[i];

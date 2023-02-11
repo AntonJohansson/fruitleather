@@ -2,7 +2,7 @@
     - op *(a: DifferentialForm, b: DifferentialForm) -> DifferentialNForm
 [ ] integrals
 [ ] sqrt
-[ ] Deal with greek letters
+[x] Deal with greek letters
 [ ] when to print (...) for bracketed expressions?
     - "(a + b)^2" gets emitted as "a + b^2"
     - Maybe if a binary operator ^ of high presedence has operands
@@ -10,7 +10,7 @@
 [ ] custom function(al) like expressions sum/prod/int, define in language instead?
 [ ] custom binary operators?
     - Define +-*/^_ in language?
-[ ] newline and alignment in equations
+[x] newline and alignment in equations
 [ ] labeling equations
 [ ] proof/theorem/remark
 [ ] images?

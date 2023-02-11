@@ -39,6 +39,12 @@ pub const Token = enum {
     In,
     Sum,
     Prod,
+    Int1,
+    Int2,
+    Int3,
+    Oint1,
+    Oint2,
+    Oint3,
     LeftImp,
     RightImp,
     Eqv,
@@ -85,8 +91,10 @@ pub const TokenBuffer = struct {
 pub const LexerState = enum {
     Start,
     Code,
-    BeginCodeDelim,
-    EndCodeDelim,
+    BeginCodeDelim1,
+    BeginCodeDelim2,
+    EndCodeDelim1,
+    EndCodeDelim2,
     Number,
     Identifier,
     String,
@@ -117,6 +125,12 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
         .{"in",     .In},
         .{"sum",    .Sum},
         .{"prod",   .Prod},
+        .{"int",    .Int1},
+        .{"int2",   .Int2},
+        .{"int3",   .Int3},
+        .{"oint",   .Oint1},
+        .{"oint2",  .Oint2},
+        .{"oint3",  .Oint3},
     });
 
     var has_invalid_tokens = false;
@@ -142,7 +156,7 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
                         try buffer.add(.Text, multi_char_token_start, i);
                         multi_char_token_start = i;
                     }
-                    state = .BeginCodeDelim;
+                    state = .BeginCodeDelim1;
                     i += 1;
                 },
                 '/' => {
@@ -153,12 +167,10 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
                     i += 1;
                 }
             },
-            .BeginCodeDelim => switch (c) {
+            .BeginCodeDelim1 => switch (c) {
                 '`' => {
-                    try buffer.add(.BigCode, i, i+1);
-                    state = .Code;
+                    state = .BeginCodeDelim2;
                     i += 1;
-                    multi_char_token_start = i;
                 },
                 else => {
                     try buffer.add(.SmallCode, i, i+1);
@@ -166,7 +178,29 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
                     multi_char_token_start = i;
                 }
             },
-            .EndCodeDelim => switch (c) {
+            .BeginCodeDelim2 => switch (c) {
+                '`' => {
+                    try buffer.add(.BigCode, i, i+1);
+                    state = .Code;
+                    i += 1;
+                    multi_char_token_start = i;
+                },
+                else => {
+                    unreachable;
+                }
+            },
+            .EndCodeDelim1 => switch (c) {
+                '`' => {
+                    state = .EndCodeDelim2;
+                    i += 1;
+                },
+                else => {
+                    try buffer.add(.SmallCode, i, i+1);
+                    state = .Start;
+                    multi_char_token_start = i;
+                }
+            },
+            .EndCodeDelim2 => switch (c) {
                 '`' => {
                     try buffer.add(.BigCode, i, i+1);
                     state = .Start;
@@ -174,9 +208,7 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
                     multi_char_token_start = i;
                 },
                 else => {
-                    try buffer.add(.SmallCode, i, i+1);
-                    state = .Start;
-                    multi_char_token_start = i;
+                    unreachable;
                 }
             },
             .Comment => switch (c) {
@@ -233,7 +265,7 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
                 '}' =>  {try buffer.add(.RightBrace,        i, i+1); i += 1;},
                 '&' =>  {try buffer.add(.Align,             i, i+1); i += 1;},
                 '`' =>  {
-                    state = .EndCodeDelim;
+                    state = .EndCodeDelim1;
                     i += 1;
                 },
                 '<' =>  {

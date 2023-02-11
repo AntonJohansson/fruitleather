@@ -54,6 +54,7 @@ pub const AstType = union(enum) {
     call_op: usize,
     mat: AstMatrix,
     sum: usize,
+    int: usize,
     prod: usize,
     text: usize,
     code: AstCode,
@@ -62,7 +63,8 @@ pub const AstType = union(enum) {
 
 pub const AstNode = struct {
     ast_type: AstType,
-    aligned: bool = false,
+    has_align: bool = false,
+    has_newline: bool = false,
     typeindex: usize = 0,
     children: std.BoundedArray(*AstNode, 16),
 };
@@ -109,6 +111,33 @@ pub const ParseState = struct {
             return error.TokenMismatch;
         }
         return state.pop();
+    }
+
+    fn expectOr(state: *ParseState, comptime tokens: []const lexer.Token) ParseError!usize {
+        const current_token = state.peek() catch {
+            const index = if (state.top > 0) state.top - 1 else 0;
+            log.errAtFmt(state.filename, state.filebuf,
+                state.buffer.locations.items[index].start,
+                "Out of tokens",
+                "Expected expression to end in {any}",
+                .{tokens}
+            );
+            return error.TokenMismatch;
+        };
+
+        inline for (tokens) |t| {
+            if (current_token == t)
+                return state.pop();
+        }
+
+        log.errAtFmt(state.filename, state.filebuf,
+            state.buffer.locations.items[state.top].start,
+            "Token mismatch",
+            "Expected {any}, got {}",
+            .{tokens, current_token}
+        );
+
+        return error.TokenMismatch;
     }
 
     fn pop(state: *ParseState) ParseError!usize {
@@ -158,7 +187,8 @@ pub const ParseState = struct {
 
     fn makeNode(state: *ParseState) ParseError!*AstNode {
         var node = try state.allocator.create(AstNode);
-        node.aligned = false;
+        node.has_align = false;
+        node.has_newline = false;
         node.typeindex = 0;
         node.children = try std.BoundedArray(*AstNode, 16).init(0);
         return node;
@@ -283,21 +313,35 @@ fn parseIdentifier(state: *ParseState) ParseError!*AstNode {
     return node;
 }
 
-fn parseBinOpExpansion(state: *ParseState, comptime op_tokens: []const lexer.Token, parse_op: fn (*ParseState) ParseError!*AstNode) ParseError!*AstNode {
+fn parseBinOpExpansion(state: *ParseState, comptime op_tokens: []const lexer.Token, comptime parse_op: fn (*ParseState) ParseError!*AstNode) ParseError!*AstNode {
     var a = try parse_op(state);
 
     var num_bin_ops: u32 = 0;
 
     while (true) {
-        const op_or_align = try state.peek();
-        const has_align = if (op_or_align == .Align) true else false;
-        const op_offset: usize = if (has_align) 2 else 1;
-        const has_op = state.matchOrOffset(op_offset, op_tokens) catch break;
+        var peek_offset: usize = 1;
+
+        const op_or_newline = try state.peekAmount(peek_offset);
+        const has_newline = (op_or_newline == .Backslash);
+        if (has_newline)
+            peek_offset += 1;
+
+        const op_or_align = try state.peekAmount(peek_offset);
+        const has_align = (op_or_align == .Align);
+        if (has_align)
+            peek_offset += 1;
+
+        const has_op = state.matchOrOffset(peek_offset, op_tokens) catch break;
         if (!has_op)
             break;
+
+        if (has_newline)
+            _ = try state.pop();
         if (has_align)
             _ = try state.pop();
+
         const op = try state.pop();
+
         const b = try parse_op(state);
 
         num_bin_ops += 1;
@@ -309,7 +353,8 @@ fn parseBinOpExpansion(state: *ParseState, comptime op_tokens: []const lexer.Tok
                 .num_args_in_subtree = num_bin_ops + 1,
             },
         };
-        node.aligned = has_align;
+        node.has_align = has_align;
+        node.has_newline = has_newline;
         try node.children.append(a);
         try node.children.append(b);
 
@@ -368,6 +413,25 @@ fn parseVectorOrMatrix(state: *ParseState) ParseError!*AstNode {
     return node;
 }
 
+fn parseInt(state: *ParseState) ParseError!*AstNode {
+    const op = try state.expectOr(&.{.Int1, .Int2, .Int3, .Oint1, .Oint2, .Oint3});
+    _ = try state.expect(.LeftParen);
+    const arg = try parseComma(state);
+    _ = try state.expect(.RightParen);
+    _ = try state.expect(.LeftBrace);
+    const exp = try parseAdd(state);
+    _ = try state.expect(.RightBrace);
+
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .int = op,
+    };
+    try node.children.append(arg);
+    try node.children.append(exp);
+
+    return node;
+}
+
 fn parseSum(state: *ParseState) ParseError!*AstNode {
     const op = try state.expect(.Sum);
     _ = try state.expect(.LeftParen);
@@ -407,32 +471,56 @@ fn parseProd(state: *ParseState) ParseError!*AstNode {
 }
 
 fn parsePrimary(state: *ParseState) ParseError!*AstNode {
-    const t0 = try state.peek();
+    var t0 = try state.peek();
+
+    const has_newline = (t0 == .Backslash);
+    if (has_newline) {
+        _ = try state.pop();
+        t0 = try state.peek();
+    }
+
+    const has_align = (t0 == .Align);
+    if (has_align) {
+        _ = try state.pop();
+        t0 = try state.peek();
+    }
+
+    var node: *AstNode = undefined;
+
     if (t0 == .Identifier) {
         const t1 = state.peekAmount(2) catch {
-            return try parseIdentifier(state);
+            node = try parseIdentifier(state);
+            node.has_align = has_align;
+            node.has_newline = has_newline;
+            return node;
         };
 
         if (t1 == .LeftParen) {
-            return try parseCall(state);
+            node = try parseCall(state);
         } else {
-            return try parseIdentifier(state);
+            node = try parseIdentifier(state);
         }
     } else if (t0 == .LeftBracket or
                t0 == .LeftAngleBracket or
                t0 == .LeftBrace) {
-        return try parseVectorOrMatrix(state);
+        node = try parseVectorOrMatrix(state);
     } else if (t0 == .Number) {
-        return try parseNumber(state);
+        node = try parseNumber(state);
     } else if (t0 == .LeftParen) {
         _ = try state.expect(.LeftParen);
-        const expr = try parseAdd(state);
+        node = try parseAdd(state);
         _ = try state.expect(.RightParen);
-        return expr;
     } else if (t0 == .Sum) {
-        return try parseSum(state);
+        node = try parseSum(state);
+    } else if (t0 == .Int1 or
+               t0 == .Int2 or
+               t0 == .Int3 or
+               t0 == .Oint1 or
+               t0 == .Oint2 or
+               t0 == .Oint3) {
+        node = try parseInt(state);
     } else if (t0 == .Prod) {
-        return try parseProd(state);
+        node = try parseProd(state);
     } else {
         log.errAt(state.filename, state.filebuf,
             state.buffer.locations.items[state.top].start,
@@ -441,6 +529,11 @@ fn parsePrimary(state: *ParseState) ParseError!*AstNode {
             );
         return error.TokenMismatch;
     }
+
+    node.has_align = has_align;
+    node.has_newline = has_newline;
+
+    return node;
 }
 
 fn parseUnary(state: *ParseState) ParseError!*AstNode {
@@ -492,9 +585,9 @@ fn parseArgs(state: *ParseState) ParseError!*AstNode {
 }
 
 fn parseTypeDecl(state: *ParseState) ParseError!*AstNode {
-    const i = try state.match(3, .{.Type, .Identifier, .LeftParen});
+    const i = try state.match(3, [_]lexer.Token{.Type, .Identifier, .LeftParen});
     const args = try parseArgs(state);
-    const j = try state.match(3, .{.RightParen, .Colon, .String});
+    const j = try state.match(3, [_]lexer.Token{.RightParen, .Colon, .String});
 
     var node = try state.makeNode();
     node.ast_type = AstType {
@@ -509,7 +602,7 @@ fn parseTypeDecl(state: *ParseState) ParseError!*AstNode {
 }
 
 fn parseArgDecl(state: *ParseState) ParseError!*AstNode {
-    const i = try state.match(3, .{.Identifier, .Colon, .Identifier});
+    const i = try state.match(3, [_]lexer.Token{.Identifier, .Colon, .Identifier});
 
     var node = try state.makeNode();
     node.ast_type = AstType {
@@ -523,7 +616,7 @@ fn parseArgDecl(state: *ParseState) ParseError!*AstNode {
 }
 
 fn parseVarDecl(state: *ParseState) ParseError!*AstNode {
-    const i = try state.match(4, .{.Var, .Identifier, .Colon, .Identifier});
+    const i = try state.match(4, [_]lexer.Token{.Var, .Identifier, .Colon, .Identifier});
 
     var node = try state.makeNode();
     node.ast_type = AstType {
