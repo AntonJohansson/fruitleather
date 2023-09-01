@@ -13,6 +13,7 @@ const log = @import("log.zig");
 
 pub const AstOpDecl = struct {
     op: usize,
+    return_type: usize,
     latex_string: usize,
 };
 
@@ -28,6 +29,8 @@ pub const AstTypeDecl = struct {
 
 pub const AstMatrix = struct {
     bracket: usize,
+    rows: usize,
+    cols: usize,
 };
 
 pub const AstBinOp = struct {
@@ -65,6 +68,7 @@ pub const AstNode = struct {
     ast_type: AstType,
     has_align: bool = false,
     has_newline: bool = false,
+    bracketed: bool = false,
     typeindex: usize = 0,
     children: std.BoundedArray(*AstNode, 16),
 };
@@ -402,10 +406,16 @@ fn parseVectorOrMatrix(state: *ParseState) ParseError!*AstNode {
     const row = try parseBinOpExpansion(state, &.{.Semicolon}, parseComma);
     _ = try state.expect(try getMatchingParen(state, open_paren));
 
+    const num_cols = if (row.ast_type == .bin_op) row.ast_type.bin_op.num_args_in_subtree else 1;
+    const num_rows = if (row.children.len > 1 and row.children.get(1).ast_type == .bin_op and state.buffer.tokens.items[row.children.get(1).ast_type.bin_op.op] == .Comma) row.children.get(1).ast_type.bin_op.num_args_in_subtree else 1;
+
+
     var node = try state.makeNode();
     node.ast_type = AstType {
         .mat = AstMatrix {
             .bracket = open_paren,
+            .rows = num_rows,
+            .cols = num_cols,
         },
     };
     try node.children.append(row);
@@ -413,24 +423,24 @@ fn parseVectorOrMatrix(state: *ParseState) ParseError!*AstNode {
     return node;
 }
 
-fn parseInt(state: *ParseState) ParseError!*AstNode {
-    const op = try state.expectOr(&.{.Int1, .Int2, .Int3, .Oint1, .Oint2, .Oint3});
-    _ = try state.expect(.LeftParen);
-    const arg = try parseComma(state);
-    _ = try state.expect(.RightParen);
-    _ = try state.expect(.LeftBrace);
-    const exp = try parseAdd(state);
-    _ = try state.expect(.RightBrace);
-
-    var node = try state.makeNode();
-    node.ast_type = AstType {
-        .int = op,
-    };
-    try node.children.append(arg);
-    try node.children.append(exp);
-
-    return node;
-}
+//fn parseInt(state: *ParseState) ParseError!*AstNode {
+//    const op = try state.expectOr(&.{.Int1, .Int2, .Int3, .Oint1, .Oint2, .Oint3});
+//    _ = try state.expect(.LeftParen);
+//    const arg = try parseComma(state);
+//    _ = try state.expect(.RightParen);
+//    _ = try state.expect(.LeftBrace);
+//    const exp = try parseAdd(state);
+//    _ = try state.expect(.RightBrace);
+//
+//    var node = try state.makeNode();
+//    node.ast_type = AstType {
+//        .int = op,
+//    };
+//    try node.children.append(arg);
+//    try node.children.append(exp);
+//
+//    return node;
+//}
 
 fn parseSum(state: *ParseState) ParseError!*AstNode {
     const op = try state.expect(.Sum);
@@ -510,15 +520,16 @@ fn parsePrimary(state: *ParseState) ParseError!*AstNode {
         _ = try state.expect(.LeftParen);
         node = try parseAdd(state);
         _ = try state.expect(.RightParen);
+        node.bracketed = true;
     } else if (t0 == .Sum) {
         node = try parseSum(state);
-    } else if (t0 == .Int1 or
-               t0 == .Int2 or
-               t0 == .Int3 or
-               t0 == .Oint1 or
-               t0 == .Oint2 or
-               t0 == .Oint3) {
-        node = try parseInt(state);
+    //} else if (t0 == .Int1 or
+    //           t0 == .Int2 or
+    //           t0 == .Int3 or
+    //           t0 == .Oint1 or
+    //           t0 == .Oint2 or
+    //           t0 == .Oint3) {
+    //    node = try parseInt(state);
     } else if (t0 == .Prod) {
         node = try parseProd(state);
     } else {
@@ -557,7 +568,7 @@ fn parsePower(state: *ParseState) ParseError!*AstNode {
 }
 
 fn parseMul(state: *ParseState) ParseError!*AstNode {
-    return try parseBinOpExpansion(state, &.{.Mul, .Div}, parsePower);
+    return try parseBinOpExpansion(state, &.{.Mul, .Div, .Period}, parsePower);
 }
 
 fn parseAdd(state: *ParseState) ParseError!*AstNode {
@@ -633,14 +644,35 @@ fn parseOpArgs(state: *ParseState) ParseError!*AstNode {
     return try parseBinOpExpansion(state, &.{.Comma}, parseArgDecl);
 }
 
+//fn parsePrefixUnaryOpDecl(state: *ParseState) ParseError!*AstNode {
+//    _ = try state.expect(.PrefixUnaryOp);
+//    const op = try state.pop();
+//
+//    var node = try state.makeNode();
+//    node.ast_type = AstType {
+//        .op_decl = AstOpDecl {
+//            .op = op,
+//            .return_type = return_type,
+//            .latex_string = string,
+//        },
+//    };
+//    try node.children.append(args);
+//
+//    return node;
+//}
+
 fn parseOpDecl(state: *ParseState) ParseError!*AstNode {
     _ = try state.expect(.Op);
 
-    const op = try state.matchOrAndPop(&.{.Add, .Sub, .Mul, .Div, .Superscript});
+    // TODO: don't hardcode
+    //const op = try state.matchOrAndPop(&.{.Add, .Sub, .Mul, .Div, .Superscript});
+    const op = try state.pop();
 
     _ = try state.expect(.LeftParen);
     const args = try parseOpArgs(state);
     _ = try state.expect(.RightParen);
+    _ = try state.expect(.To);
+    const return_type = try state.expect(.Identifier);
     _ = try state.expect(.Colon);
     const string = try state.expect(.String);
 
@@ -648,6 +680,7 @@ fn parseOpDecl(state: *ParseState) ParseError!*AstNode {
     node.ast_type = AstType {
         .op_decl = AstOpDecl {
             .op = op,
+            .return_type = return_type,
             .latex_string = string,
         },
     };

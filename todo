@@ -3,10 +3,6 @@
 [ ] integrals
 [ ] sqrt
 [x] Deal with greek letters
-[ ] when to print (...) for bracketed expressions?
-    - "(a + b)^2" gets emitted as "a + b^2"
-    - Maybe if a binary operator ^ of high presedence has operands
-      which in turn are binary expressions of lower presedence
 [ ] custom function(al) like expressions sum/prod/int, define in language instead?
 [ ] custom binary operators?
     - Define +-*/^_ in language?
@@ -16,3 +12,14 @@
 [ ] images?
 [ ] tables?
 [ ] period/comma after equations
+
+[x] allow definition of return type of operations
+[x] bind types to variable names
+[x] dont have comments in ast??
+[x] copy bracketing from input code
+[x] why dont types typeset correctly?
+[ ] custom operator character
+[x] propagate types down ast
+[ ] references
+[ ] custom prefix unary operators
+[ ] custom postfix unary operators

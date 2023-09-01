@@ -3,9 +3,10 @@ const log = @import("log.zig");
 
 const ziglyph = @import("ziglyph");
 
-pub const Token = enum {
+pub const Token = enum(u32) {
     // 1-char
     Comma,
+    Period,
     Colon,
     Semicolon,
     LeftParen,
@@ -36,15 +37,10 @@ pub const Token = enum {
     Type,
     Var,
     Op,
+    PrefixUnaryOp,
     In,
     Sum,
     Prod,
-    Int1,
-    Int2,
-    Int3,
-    Oint1,
-    Oint2,
-    Oint3,
     LeftImp,
     RightImp,
     Eqv,
@@ -122,15 +118,10 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
         .{"type",   .Type},
         .{"var",    .Var},
         .{"op",     .Op},
+        .{"prefixunaryop", .PrefixUnaryOp},
         .{"in",     .In},
         .{"sum",    .Sum},
         .{"prod",   .Prod},
-        .{"int",    .Int1},
-        .{"int2",   .Int2},
-        .{"int3",   .Int3},
-        .{"oint",   .Oint1},
-        .{"oint2",  .Oint2},
-        .{"oint3",  .Oint3},
     });
 
     var has_invalid_tokens = false;
@@ -160,6 +151,10 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
                     i += 1;
                 },
                 '/' => {
+                    if (i > multi_char_token_start) {
+                        try buffer.add(.Text, multi_char_token_start, i);
+                        multi_char_token_start = i;
+                    }
                     state = .Comment;
                     i += 1;
                 },
@@ -213,10 +208,6 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
             },
             .Comment => switch (c) {
                 '/' => {
-                    if (i > multi_char_token_start) {
-                        try buffer.add(.Text, multi_char_token_start, i);
-                        multi_char_token_start = i;
-                    }
                     while (i < buf.len) {
                         switch (buf[i]) {
                             '\n', '\r' => {
@@ -255,6 +246,7 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
             .Code => switch (c) {
                 ' ', '\t', '\n', '\r' => {i += 1;},
                 ',' =>  {try buffer.add(.Comma,             i, i+1); i += 1;},
+                '.' =>  {try buffer.add(.Period,            i, i+1); i += 1;},
                 ':' =>  {try buffer.add(.Colon,             i, i+1); i += 1;},
                 ';' =>  {try buffer.add(.Semicolon,         i, i+1); i += 1;},
                 '(' =>  {try buffer.add(.LeftParen,         i, i+1); i += 1;},
