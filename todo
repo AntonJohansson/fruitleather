@@ -1,6 +1,7 @@
+[ ] Deal with To and Colon as binary operators
 [ ] binary operators of different return type
     - op *(a: DifferentialForm, b: DifferentialForm) -> DifferentialNForm
-[ ] integrals
+[x] integrals
 [ ] sqrt
 [x] Deal with greek letters
 [ ] custom function(al) like expressions sum/prod/int, define in language instead?

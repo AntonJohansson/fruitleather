@@ -34,6 +34,7 @@ pub const Token = enum(u32) {
     LessThanEqual,
     GreaterThanEqual,
     // keywords
+    Import,
     Type,
     Var,
     Op,
@@ -115,6 +116,7 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
     var multi_char_token_start: usize = 0;
 
     const keywords = std.ComptimeStringMap(Token, .{
+        .{"import", .Import},
         .{"type",   .Type},
         .{"var",    .Var},
         .{"op",     .Op},

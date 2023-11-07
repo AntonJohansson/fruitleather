@@ -1,6 +1,6 @@
-# The Minkowski metric and Hodge operator
 ```
 type NumberSet(x): "\mathbb{$x}";
+type Curve(x): "\mathcal{$x}";
 type DifferentialForm(x): "\dd{$x}";
 
 var t: DifferentialForm;
@@ -9,7 +9,7 @@ var y: DifferentialForm;
 var z: DifferentialForm;
 
 var R: NumberSet;
-```
+var C: Curve;
 
 ```
 // int_a^b \dd{x}
@@ -34,6 +34,20 @@ op _(a: Vector, b: Number) -> Vector: "";
 op .(a: Vector, b: Vector) -> Number: "\cdot";
 op *(a: Matrix, b: Vector) -> Vector: "";
 ```
+
+# Tangent Spaces
+
+// subseteq instad of "in"
+DEF: Suppose `C in R^2` is a curve, and `p in C`. The *Tangent Space* to `C` at `p`, denoted `T_p*C` is the set of all vectors tangent to `C` at `p`.
+
+// subseteq instad of "in"
+How do we differentiate between points in `C in R^2` and vectors in `T_p*C in R^2`? We denote the coordinate system in `C` by
+```
+&[x,y]: C -> R^2;
+&[x,y](p) = [x(p), y(p)];
+```
+
+# The Minkowski metric and Hodge operator
 
 Working in `R^4` with the 1-forms `t,x,y,z` we have the Minkowski metric
 ```

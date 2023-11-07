@@ -246,6 +246,11 @@ fn parseText(state: *ParseState) ParseError!*AstNode {
     return node;
 }
 
+fn parseImport(state: *ParseState) ParseError!*AstNode {
+    _ = state;
+    return error.TokenMismatch;
+}
+
 fn parseSmallCode(state: *ParseState) ParseError!*AstNode {
     const i = try state.expect(.SmallCode);
 
@@ -258,6 +263,7 @@ fn parseSmallCode(state: *ParseState) ParseError!*AstNode {
 
     const token = try state.peek();
     var code = switch (token) {
+        .Import => try parseImport(state),
         .Type => try parseTypeDecl(state),
         .Var  => try parseVarDecl(state),
         .Op   => try parseOpDecl(state),
@@ -285,6 +291,7 @@ fn parseBigCode(state: *ParseState) ParseError!*AstNode {
         const token = try state.peek();
         var code = switch (token) {
             .BigCode => break,
+            .Import => try parseImport(state),
             .Type => try parseTypeDecl(state),
             .Var  => try parseVarDecl(state),
             .Op   => try parseOpDecl(state),
