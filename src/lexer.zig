@@ -30,6 +30,7 @@ pub const Token = enum(u32) {
     BigCode,
     Header,
     Newline,
+    At,
     // ?
     LessThanEqual,
     GreaterThanEqual,
@@ -42,6 +43,8 @@ pub const Token = enum(u32) {
     In,
     Sum,
     Prod,
+    Def,
+    Thm,
     LeftImp,
     RightImp,
     Eqv,
@@ -103,6 +106,7 @@ pub const LexerState = enum {
     GreaterThan,
     CommentOrDiv,
     Comment,
+    IntrinState,
 };
 
 pub const LexError = error {
@@ -112,6 +116,7 @@ pub const LexError = error {
 pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) !TokenBuffer {
     var buffer = try TokenBuffer.init(allocator);
 
+    var return_state: ?LexerState = null;
     var state: LexerState = .Start;
     var multi_char_token_start: usize = 0;
 
@@ -124,6 +129,8 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
         .{"in",     .In},
         .{"sum",    .Sum},
         .{"prod",   .Prod},
+        .{"def",    .Def},
+        .{"thm",    .Thm},
     });
 
     var has_invalid_tokens = false;
@@ -160,9 +167,26 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
                     state = .Comment;
                     i += 1;
                 },
+                '@' => {try buffer.add(.At, i, i+1); i += 1; state = .IntrinState;},
+                '{' => {try buffer.add(.LeftBrace, i, i+1); i += 1; multi_char_token_start = i;},
+                '}' => {try buffer.add(.RightBrace, i, i+1); i += 1; multi_char_token_start = i;},
                 else => {
                     i += 1;
                 }
+            },
+            .IntrinState => switch (c) {
+                '(' => {try buffer.add(.LeftParen, i, i+1); i += 1;},
+                ')' => {try buffer.add(.RightParen, i, i+1); i += 1; state = .Start; multi_char_token_start = i;},
+                ',' => {try buffer.add(.Comma, i, i+1); i += 1;},
+                'a' ... 'z','A' ... 'Z' => {
+                    multi_char_token_start = i;
+                    state = .Identifier;
+                    return_state = .IntrinState;
+                    i += 1;
+                },
+                else => {
+                    unreachable;
+                },
             },
             .BeginCodeDelim1 => switch (c) {
                 '`' => {
@@ -300,6 +324,7 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
                 'a' ... 'z','A' ... 'Z' => {
                     multi_char_token_start = i;
                     state = .Identifier;
+                    return_state = .Code;
                     i += 1;
                 },
                 '"' => {
@@ -333,6 +358,7 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
                     if (ziglyph.isAlphabetic(codepoint)) {
                         multi_char_token_start = i;
                         state = .Identifier;
+                        return_state = .Code;
                         i += len;
                     } else {
                         log.errAt(filename, buf, i, "", "Unrecognized token");
@@ -407,7 +433,7 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
                     } else {
                         try buffer.add(.Identifier, multi_char_token_start, i);
                     }
-                    state = .Code;
+                    state = return_state.?;
                 }
             },
             .String => switch (c) {

@@ -11,10 +11,17 @@ const log = @import("log.zig");
 //
 // var := Identifier | Identifier '^' Expr | Identifier '_' Expr
 
+pub const OpType = enum {
+    BinaryOp,
+    PrefixUnaryOp,
+    PostfixUnaryOp,
+};
+
 pub const AstOpDecl = struct {
     op: usize,
     return_type: usize,
     latex_string: usize,
+    type: OpType,
 };
 
 pub const AstVarDecl = struct {
@@ -57,11 +64,14 @@ pub const AstType = union(enum) {
     call_op: usize,
     mat: AstMatrix,
     sum: usize,
-    int: usize,
     prod: usize,
     text: usize,
     code: AstCode,
     header: AstHeader,
+    intrin: usize,
+    thm: usize,
+    def: usize,
+    block: usize,
 };
 
 pub const AstNode = struct {
@@ -164,7 +174,7 @@ pub const ParseState = struct {
         if (!state.hasNTokens(N))
             return error.OutOfTokens;
         var result: [N]usize = undefined;
-        inline for (tokens) |t,i| {
+        inline for (tokens, 0..) |t,i| {
             result[i] = state.top + i;
             if (t != state.buffer.tokens.items[state.top + i])
                 return error.TokenMismatch;
@@ -188,7 +198,6 @@ pub const ParseState = struct {
         return false;
     }
 
-
     fn makeNode(state: *ParseState) ParseError!*AstNode {
         var node = try state.allocator.create(AstNode);
         node.has_align = false;
@@ -202,8 +211,7 @@ pub const ParseState = struct {
 pub fn parse(state: *ParseState) ParseError!std.ArrayList(*AstNode) {
     var statement_list = std.ArrayList(*AstNode).init(state.allocator);
     while (state.hasTokens()) {
-        while (state.hasTokens() and (try state.peek()) == .Newline)
-            _ = try state.pop();
+        try consumeNewline(state);
         if (!state.hasTokens())
             break;
         const statement = try parseStatement(state);
@@ -212,10 +220,23 @@ pub fn parse(state: *ParseState) ParseError!std.ArrayList(*AstNode) {
     return statement_list;
 }
 
+fn consumeNewline(state: *ParseState) ParseError!void {
+    while (state.hasTokens() and (try state.peek()) == .Newline)
+        _ = try state.pop();
+    return;
+}
+
 fn parseStatement(state: *ParseState) ParseError!*AstNode {
+    while (state.hasTokens() and (try state.peek()) == .Newline)
+        _ = try state.pop();
+    if (!state.hasTokens())
+        return error.TokenMismatch;
+
     const token = try state.peek();
     var node = switch (token) {
         .Header => parseHeader(state),
+        .LeftBrace => parseBlock(state),
+        .At => try parseIntrinsic(state),
         .Text => parseText(state),
         .SmallCode => parseSmallCode(state),
         .BigCode => parseBigCode(state),
@@ -224,9 +245,33 @@ fn parseStatement(state: *ParseState) ParseError!*AstNode {
     return node;
 }
 
+fn parseBlock(state: *ParseState) ParseError!*AstNode {
+    const i = try state.expect(.LeftBrace);
+
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .block = i,
+    };
+
+    while (state.hasTokens()) {
+        try consumeNewline(state);
+        if (state.hasTokens() and (try state.peek()) == .RightBrace) {
+            _ = try state.pop();
+            break;
+        }
+        if (!state.hasTokens())
+            break;
+        const statement = try parseStatement(state);
+        try node.children.append(statement);
+    }
+
+    return node;
+}
+
 fn parseHeader(state: *ParseState) ParseError!*AstNode {
     _ = try state.expect(.Header);
     const text = try parseText(state);
+
     var node = try state.makeNode();
     node.ast_type = AstType {
         .header = AstHeader {
@@ -243,6 +288,64 @@ fn parseText(state: *ParseState) ParseError!*AstNode {
     node.ast_type = AstType {
         .text = i,
     };
+    return node;
+}
+
+fn parseIntrinsic(state: *ParseState) ParseError!*AstNode {
+    _ = try state.expect(.At);
+    const token = try state.peek();
+    switch (token) {
+        .Thm => return try parseThm(state),
+        .Def => return try parseDef(state),
+        else => unreachable,
+    }
+}
+
+fn parseThm(state: *ParseState) ParseError!*AstNode {
+    const i = try state.expect(.Thm);
+
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .thm = i,
+    };
+
+    _ = try state.expect(.LeftParen);
+    const name = try parseIdentifier(state);
+    _ = try state.expect(.RightParen);
+    try node.children.append(name);
+
+    switch (try state.peek()) {
+        .Text => {
+            const text = try parseText(state);
+            try node.children.append(text);
+        },
+        else => {},
+    }
+
+    const body = try parseStatement(state);
+    try node.children.append(body);
+
+    return node;
+}
+
+fn parseDef(state: *ParseState) ParseError!*AstNode {
+    const i = try state.expect(.Def);
+
+    _ = try state.expect(.LeftParen);
+    const name = try parseIdentifier(state);
+    _ = try state.expect(.RightParen);
+
+    const text = try parseText(state);
+
+    const body = try parseStatement(state);
+
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .def = i,
+    };
+    try node.children.append(name);
+    try node.children.append(text);
+    try node.children.append(body);
     return node;
 }
 
@@ -266,6 +369,7 @@ fn parseSmallCode(state: *ParseState) ParseError!*AstNode {
         .Import => try parseImport(state),
         .Type => try parseTypeDecl(state),
         .Var  => try parseVarDecl(state),
+        .PrefixUnaryOp => try parsePrefixUnaryOpDecl(state),
         .Op   => try parseOpDecl(state),
         else  => try parseExpression(state),
     };
@@ -294,6 +398,7 @@ fn parseBigCode(state: *ParseState) ParseError!*AstNode {
             .Import => try parseImport(state),
             .Type => try parseTypeDecl(state),
             .Var  => try parseVarDecl(state),
+            .PrefixUnaryOp => try parsePrefixUnaryOpDecl(state),
             .Op   => try parseOpDecl(state),
             else  => try parseExpression(state),
         };
@@ -530,13 +635,6 @@ fn parsePrimary(state: *ParseState) ParseError!*AstNode {
         node.bracketed = true;
     } else if (t0 == .Sum) {
         node = try parseSum(state);
-    //} else if (t0 == .Int1 or
-    //           t0 == .Int2 or
-    //           t0 == .Int3 or
-    //           t0 == .Oint1 or
-    //           t0 == .Oint2 or
-    //           t0 == .Oint3) {
-    //    node = try parseInt(state);
     } else if (t0 == .Prod) {
         node = try parseProd(state);
     } else {
@@ -651,22 +749,31 @@ fn parseOpArgs(state: *ParseState) ParseError!*AstNode {
     return try parseBinOpExpansion(state, &.{.Comma}, parseArgDecl);
 }
 
-//fn parsePrefixUnaryOpDecl(state: *ParseState) ParseError!*AstNode {
-//    _ = try state.expect(.PrefixUnaryOp);
-//    const op = try state.pop();
-//
-//    var node = try state.makeNode();
-//    node.ast_type = AstType {
-//        .op_decl = AstOpDecl {
-//            .op = op,
-//            .return_type = return_type,
-//            .latex_string = string,
-//        },
-//    };
-//    try node.children.append(args);
-//
-//    return node;
-//}
+fn parsePrefixUnaryOpDecl(state: *ParseState) ParseError!*AstNode {
+    _ = try state.expect(.PrefixUnaryOp);
+    const op = try state.pop();
+
+    _ = try state.expect(.LeftParen);
+    const args = try parseOpArgs(state);
+    _ = try state.expect(.RightParen);
+    _ = try state.expect(.To);
+    const return_type = try state.expect(.Identifier);
+    _ = try state.expect(.Colon);
+    const string = try state.expect(.String);
+
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .op_decl = AstOpDecl {
+            .op = op,
+            .return_type = return_type,
+            .latex_string = string,
+            .type = .PrefixUnaryOp,
+        },
+    };
+    try node.children.append(args);
+
+    return node;
+}
 
 fn parseOpDecl(state: *ParseState) ParseError!*AstNode {
     _ = try state.expect(.Op);
@@ -689,6 +796,7 @@ fn parseOpDecl(state: *ParseState) ParseError!*AstNode {
             .op = op,
             .return_type = return_type,
             .latex_string = string,
+            .type = .BinaryOp,
         },
     };
     try node.children.append(args);

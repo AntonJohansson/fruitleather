@@ -36,7 +36,7 @@ pub fn main() !void {
     };
     const bench_lex = bench_timer.read();
 
-    //for (buffer.tokens.items) |t, j| {
+    //for (buffer.tokens.items, 0..) |t, j| {
     //    const loc = buffer.locations.items[j];
     //    std.debug.print("-- {} \t\t {s}\n", .{t, buf[loc.start..loc.end]});
     //}
@@ -90,10 +90,11 @@ const OpInfo = struct {
     name: []const u8,
     latex_string: []const u8,
     var_name_a: []const u8,
-    var_name_b: []const u8,
+    var_name_b: []const u8 = undefined,
     typeindex_a: usize,
-    typeindex_b: usize,
+    typeindex_b: usize = undefined,
     rettypeindex: usize,
+    type: parser.OpType,
 };
 
 const AstTypes = struct {
@@ -171,7 +172,7 @@ fn setSubtreeTypes(state: *parser.ParseState, node: *parser.AstNode, ast_types: 
             const var_name = state.filebuf[var_loc.start..var_loc.end];
             const type_name = ast_types.vars.get(var_name);
             if (type_name != null) {
-                for (ast_types.typearray.items) |t,i| {
+                for (ast_types.typearray.items, 0..) |t,i| {
                     if (std.mem.eql(u8, type_name.?, t.name)) {
                         node.typeindex = i;
                         break;
@@ -264,17 +265,51 @@ fn setSubtreeTypes(state: *parser.ParseState, node: *parser.AstNode, ast_types: 
             // Depends on type of factor and ops on this type
             _ = setSubtreeTypes(state, node.children.get(1), ast_types);
         },
-        .int => {
-            // Depends on type of factor and ops on this type
-            _ = setSubtreeTypes(state, node.children.get(1), ast_types);
-        },
         .call_op => {
             // ?
             _ = setSubtreeTypes(state, node.children.get(0), ast_types);
         },
+        .intrin => {
+        },
+        .block => {
+            for (node.children.slice()) |c| {
+                _ = setSubtreeTypes(state, c, ast_types);
+            }
+            std.log.info("block", .{});
+        },
+        .thm => {
+            const has_title = node.children.len == 3;
+            const i: usize = if (has_title) 2 else 1;
+            _ = setSubtreeTypes(state, node.children.get(i), ast_types);
+            std.log.info("block", .{});
+        },
+        .def => {
+            const has_title = node.children.len == 3;
+            const i: usize = if (has_title) 2 else 1;
+            _ = setSubtreeTypes(state, node.children.get(i), ast_types);
+            std.log.info("block", .{});
+        },
         else => unreachable,
     }
     return node.typeindex;
+}
+
+fn collectCodeSubnodes(state: *parser.ParseState, node: *parser.AstNode, result: *std.ArrayList(*parser.AstNode)) void {
+    if (node.ast_type == .code) {
+        result.append(node) catch unreachable;
+    } else {
+        for (node.children.slice()) |c| {
+            collectCodeSubnodes(state, c, result);
+        }
+    }
+}
+
+fn collectCodeNodes(state: *parser.ParseState, statements: *std.ArrayList(*parser.AstNode)) std.ArrayList(*parser.AstNode) {
+    var result = std.ArrayList(*parser.AstNode).init(state.allocator);
+    for (statements.items) |n| {
+        collectCodeSubnodes(state, n, &result);
+    }
+    return result;
 }
 
 fn setAstTypes(state: *parser.ParseState, statements: *std.ArrayList(*parser.AstNode)) !AstTypes {
@@ -285,23 +320,19 @@ fn setAstTypes(state: *parser.ParseState, statements: *std.ArrayList(*parser.Ast
         .oparray = std.ArrayList(OpInfo).init(state.allocator),
     };
 
-    try ast_types.typearray.append(TypeInfo{ .name = "Unknown", .latex_string = "", .var_name = "" });
-    try ast_types.typearray.append(TypeInfo{ .name = "Number", .latex_string = "", .var_name = ""});
-    try ast_types.typearray.append(TypeInfo{ .name = "Matrix", .latex_string = "\\mathrm{\\mathbf{$x}}", .var_name = "x"});
-    try ast_types.typearray.append(TypeInfo {.name = "Vector",  .latex_string = "\\vec{$x}", .var_name = "x"});
+    try ast_types.typearray.append(TypeInfo { .name = "Unknown", .latex_string = "", .var_name = "" });
+    try ast_types.typearray.append(TypeInfo { .name = "Number", .latex_string = "", .var_name = ""});
+    try ast_types.typearray.append(TypeInfo { .name = "Matrix", .latex_string = "\\mathrm{\\mathbf{$x}}", .var_name = "x"});
+    try ast_types.typearray.append(TypeInfo { .name = "Vector", .latex_string = "\\vec{$x}", .var_name = "x"});
 
     try ast_types.types.put("Unknown", 0);
     try ast_types.types.put("Number", 1);
     try ast_types.types.put("Matrix", 2);
     try ast_types.types.put("Vector",  3);
 
-    var si: usize = 0;
-    while (si < statements.items.len) {
-        const parent = statements.items[si];
-        if (parent.ast_type != .code) {
-            si += 1;
-            continue;
-        }
+    const code_nodes = collectCodeNodes(state, statements);
+
+    for (code_nodes.items) |parent| {
         var sj: usize = 0;
         while (sj < parent.children.len) {
             const node = parent.children.get(sj);
@@ -354,9 +385,10 @@ fn setAstTypes(state: *parser.ParseState, statements: *std.ArrayList(*parser.Ast
                     }
                 },
                 .op_decl => {
-                    const op_loc = state.buffer.locations.items[node.ast_type.op_decl.op];
-                    const return_type_loc = state.buffer.locations.items[node.ast_type.op_decl.return_type];
-                    const latex_loc = state.buffer.locations.items[node.ast_type.op_decl.latex_string];
+                    const op_decl = node.ast_type.op_decl;
+                    const op_loc = state.buffer.locations.items[op_decl.op];
+                    const return_type_loc = state.buffer.locations.items[op_decl.return_type];
+                    const latex_loc = state.buffer.locations.items[op_decl.latex_string];
 
                     const op_name = state.filebuf[op_loc.start..op_loc.end];
                     const return_typename = state.filebuf[return_type_loc.start..return_type_loc.end];
@@ -367,27 +399,49 @@ fn setAstTypes(state: *parser.ParseState, statements: *std.ArrayList(*parser.Ast
 
                     const latex_string = state.filebuf[latex_loc.start..latex_loc.end];
 
-                    // TODO: don't hardode 2 args
-                    const varname_a_loc  = state.buffer.locations.items[node.children.get(0).children.get(0).ast_type.var_decl.var_name];
-                    const typename_a_loc = state.buffer.locations.items[node.children.get(0).children.get(0).ast_type.var_decl.type_name];
-                    const varname_b_loc  = state.buffer.locations.items[node.children.get(0).children.get(1).ast_type.var_decl.var_name];
-                    const typename_b_loc = state.buffer.locations.items[node.children.get(0).children.get(1).ast_type.var_decl.type_name];
-                    const varname_a  = state.filebuf[varname_a_loc.start..varname_a_loc.end];
-                    const typename_a = state.filebuf[typename_a_loc.start..typename_a_loc.end];
-                    const varname_b  = state.filebuf[varname_b_loc.start..varname_b_loc.end];
-                    const typename_b = state.filebuf[typename_b_loc.start..typename_b_loc.end];
-                    var ta: usize = ast_types.types.get(typename_a) orelse 0;
-                    var tb: usize = ast_types.types.get(typename_b) orelse 0;
-                    try ast_types.oparray.append(OpInfo {
-                        .name = op_name,
-                        .latex_string = latex_string,
-                        .var_name_a = varname_a,
-                        .var_name_b = varname_b,
-                        .typeindex_a = ta,
-                        .typeindex_b = tb,
-                        .rettypeindex = tr,
-                    });
-                    _ = parent.children.orderedRemove(sj);
+                    switch (op_decl.type) {
+                        .BinaryOp => {
+                            // TODO: don't hardode 2 args
+                            const varname_a_loc  = state.buffer.locations.items[node.children.get(0).children.get(0).ast_type.var_decl.var_name];
+                            const typename_a_loc = state.buffer.locations.items[node.children.get(0).children.get(0).ast_type.var_decl.type_name];
+                            const varname_b_loc  = state.buffer.locations.items[node.children.get(0).children.get(1).ast_type.var_decl.var_name];
+                            const typename_b_loc = state.buffer.locations.items[node.children.get(0).children.get(1).ast_type.var_decl.type_name];
+                            const varname_a  = state.filebuf[varname_a_loc.start..varname_a_loc.end];
+                            const typename_a = state.filebuf[typename_a_loc.start..typename_a_loc.end];
+                            const varname_b  = state.filebuf[varname_b_loc.start..varname_b_loc.end];
+                            const typename_b = state.filebuf[typename_b_loc.start..typename_b_loc.end];
+                            var ta: usize = ast_types.types.get(typename_a) orelse 0;
+                            var tb: usize = ast_types.types.get(typename_b) orelse 0;
+                            try ast_types.oparray.append(OpInfo {
+                                .name = op_name,
+                                .latex_string = latex_string,
+                                .var_name_a = varname_a,
+                                .var_name_b = varname_b,
+                                .typeindex_a = ta,
+                                .typeindex_b = tb,
+                                .rettypeindex = tr,
+                                .type = op_decl.type,
+                            });
+                            _ = parent.children.orderedRemove(sj);
+                        },
+                        .PostfixUnaryOp,
+                        .PrefixUnaryOp => {
+                            const varname_a_loc  = state.buffer.locations.items[node.children.get(0).ast_type.var_decl.var_name];
+                            const typename_a_loc = state.buffer.locations.items[node.children.get(0).ast_type.var_decl.type_name];
+                            const varname_a  = state.filebuf[varname_a_loc.start..varname_a_loc.end];
+                            const typename_a = state.filebuf[typename_a_loc.start..typename_a_loc.end];
+                            var ta: usize = ast_types.types.get(typename_a) orelse 0;
+                            try ast_types.oparray.append(OpInfo {
+                                .name = op_name,
+                                .latex_string = latex_string,
+                                .var_name_a = varname_a,
+                                .typeindex_a = ta,
+                                .rettypeindex = tr,
+                                .type = op_decl.type,
+                            });
+                            _ = parent.children.orderedRemove(sj);
+                        },
+                    }
                 },
                 else => {
                     _ = setSubtreeTypes(state, node, &ast_types);
@@ -395,13 +449,19 @@ fn setAstTypes(state: *parser.ParseState, statements: *std.ArrayList(*parser.Ast
                 },
             }
         }
+    }
 
+    // Remove empty nodes??
+    var si: usize = 0;
+    while (si < statements.items.len) {
+        const parent = statements.items[si];
         if (parent.children.len == 0) {
             _ = statements.orderedRemove(si);
         } else {
             si += 1;
         }
     }
+
     return ast_types;
 }
 
@@ -435,6 +495,20 @@ fn dumpStatementsToLatex(state: *parser.ParseState, filename: []const u8, statem
     try writer.writeAll("\\newcommand{\\Span}{\\mathrm{span}\\,}\n");
     try writer.writeAll("\\newcommand{\\dc}[1]{\\mathrm{<}#1\\mathrm{>}}\n");
     try writer.writeAll("\n");
+    try writer.writeAll("\\theoremstyle{theorem}");
+    try writer.writeAll("\\newtheorem{theorem}{Thm}[section]");
+    try writer.writeAll("\\newtheoremstyle{Def}{1em}{1em}{}{}{\\bfseries}{.}{.5em}{}");
+    try writer.writeAll("\\theoremstyle{Def}");
+    try writer.writeAll("\\newtheorem{Def}{Def}[section]");
+    try writer.writeAll("\\theoremstyle{Def}");
+    try writer.writeAll("\\newtheorem{Ex}{Ex}[section]");
+    try writer.writeAll("\\theoremstyle{corollary}");
+    try writer.writeAll("\\newtheorem{corollary}{Cor}[theorem]");
+    try writer.writeAll("\\theoremstyle{lemma}");
+    try writer.writeAll("\\newtheorem{lemma}{Lem}[theorem]");
+    try writer.writeAll("\\theoremstyle{remark}");
+    try writer.writeAll("\\newtheorem*{remark}{Rem}");
+    try writer.writeAll("\n");
     try writer.writeAll("\\begin{document}");
 
     try writer.writeAll("\n");
@@ -443,6 +517,7 @@ fn dumpStatementsToLatex(state: *parser.ParseState, filename: []const u8, statem
         try dumpExpression(state, writer, state.filebuf, ast_types, node, false, true);
     }
 
+    try writer.writeAll("\n");
     try writer.writeAll("\\end{document}\n");
 }
 
@@ -595,7 +670,7 @@ fn dumpExpression(parse_state: *parser.ParseState, writer: std.fs.File.Writer, b
                 try writer.writeAll("\\begin{align*}\n");
                 try writer.writeAll("\t");
             }
-            for (node.children.constSlice()) |child,i| {
+            for (node.children.constSlice(), 0..) |child,i| {
                 try dumpExpression(parse_state, writer, buf, ast_types, child, in_mat, allow_in_parens);
                 if (node.children.len > 1 and i < node.children.len-1)
                     try writer.writeAll("\\\\\n\t");
@@ -609,7 +684,7 @@ fn dumpExpression(parse_state: *parser.ParseState, writer: std.fs.File.Writer, b
         },
         .text => {
             const text_loc = parse_state.buffer.locations.items[node.ast_type.text];
-            const text = buf[text_loc.start..text_loc.end];
+            const text = strip(buf[text_loc.start..text_loc.end]);
             try writer.print("{s}", .{text});
         },
         .var_name => {
@@ -632,7 +707,7 @@ fn dumpExpression(parse_state: *parser.ParseState, writer: std.fs.File.Writer, b
                             i < latex_string.len - latex_var.len and
 
                             std.mem.eql(u8, latex_string[(i+1)..(i+1+latex_var.len)], latex_var)) {
-                            for (var_name) |d,j| {
+                            for (var_name, 0..) |d,j| {
                                 new_latex_string[k+j] = d;
                             }
                             k += var_name.len;
@@ -854,39 +929,6 @@ fn dumpExpression(parse_state: *parser.ParseState, writer: std.fs.File.Writer, b
             }
             try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(1), in_mat, allow_in_parens);
         },
-        .int => |v| {
-            std.debug.print("{}\n", .{node.children.get(0).ast_type});
-            const num_args = if (node.children.get(0).ast_type == .bin_op)
-                node.children.get(0).ast_type.bin_op.num_args_in_subtree
-            else                1;
-
-
-            const token = parse_state.buffer.tokens.items[v];
-            if      (token == .Int1) {
-                try writer.writeAll("\\int_{");
-            } else if (token == .Int2) {
-                try writer.writeAll("\\iint_{");
-            } else if (token == .Int3)  {
-                try writer.writeAll("\\iiint_{");
-            } else if (token == .Oint1) {
-                try writer.writeAll("\\oint_{");
-            } else if (token == .Oint2) {
-                try writer.writeAll("\\oiint_{");
-            } else if (token == .Oint3) {
-                try writer.writeAll("\\oiiint_{");
-            } else {unreachable;}
-
-            if (num_args == 1) {
-                try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(0), in_mat, allow_in_parens);
-                try writer.writeAll("} ");
-            } else {
-                try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(0).children.get(0), in_mat, allow_in_parens);
-                try writer.writeAll("}^{");
-                try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(0).children.get(1), in_mat, allow_in_parens);
-                try writer.writeAll("} ");
-            }
-            try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(1), in_mat, allow_in_parens);
-        },
         .call_op => {
             const loc = parse_state.buffer.locations.items[node.ast_type.call_op];
             const op = buf[loc.start..loc.end];
@@ -898,6 +940,63 @@ fn dumpExpression(parse_state: *parser.ParseState, writer: std.fs.File.Writer, b
             }
             try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(0), in_mat, allow_in_parens);
             try writer.writeAll(")");
+        },
+        .intrin => {
+        },
+        .thm => {
+            try writer.writeAll("\n");
+            try writer.writeAll("\\begin{theorem}\n");
+
+            const has_title = node.children.len == 3;
+            var i: usize = 0;
+
+            try writer.writeAll("\\label{thm:");
+            try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(i), in_mat, allow_in_parens);
+            try writer.writeAll("}\n");
+            i += 1;
+
+            if (has_title) {
+                try writer.writeAll("(");
+                try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(i), in_mat, allow_in_parens);
+                try writer.writeAll(")");
+                try writer.writeAll(" ");
+                i += 1;
+            }
+
+            try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(i), in_mat, allow_in_parens);
+
+            try writer.writeAll("\n");
+            try writer.writeAll("\\end{theorem}\n");
+        },
+        .def => {
+            try writer.writeAll("\n");
+            try writer.writeAll("\\begin{Def}\n");
+
+            const has_title = node.children.len == 3;
+            var i: usize = 0;
+
+            try writer.writeAll("\\label{def:");
+            try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(i), in_mat, allow_in_parens);
+            try writer.writeAll("}\n");
+            i += 1;
+
+            if (has_title) {
+                try writer.writeAll("(");
+                try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(i), in_mat, allow_in_parens);
+                try writer.writeAll(")");
+                try writer.writeAll(" ");
+                i += 1;
+            }
+
+            try dumpExpression(parse_state, writer, buf, ast_types, node.children.get(i), in_mat, allow_in_parens);
+
+            try writer.writeAll("\n");
+            try writer.writeAll("\\end{Def}\n");
+        },
+        .block => {
+            for (node.children.slice()) |c| {
+                try dumpExpression(parse_state, writer, buf, ast_types, c, in_mat, allow_in_parens);
+            }
         },
         else => {},
     }
@@ -919,10 +1018,22 @@ fn dumpStatementsToDotImpl(state: *parser.ParseState, writer: std.fs.File.Writer
         .header => {
             writer.writeAll("header") catch return;
         },
+        .intrin => {
+            writer.writeAll("intrin") catch return;
+        },
+        .block => {
+            writer.writeAll("block") catch return;
+        },
+        .thm => {
+            writer.writeAll("thm") catch return;
+        },
+        .def => {
+            writer.writeAll("def") catch return;
+        },
         .code => {
             writer.writeAll("code") catch return;
         },
-        .var_name, .call_op, .unary_op, .sum, .prod, .int, .text,
+        .var_name, .call_op, .unary_op, .sum, .prod, .text,
         .number => |i| {
             const loc = state.buffer.locations.items[i];
             const name = state.filebuf[loc.start..loc.end];
@@ -935,8 +1046,8 @@ fn dumpStatementsToDotImpl(state: *parser.ParseState, writer: std.fs.File.Writer
         },
         .var_decl  => |i| {
             const ti = @typeInfo(@TypeOf(i)).Struct;
-            inline for (ti.fields) |f,j| {
-                if (f.field_type != usize)
+            inline for (ti.fields, 0..) |f,j| {
+                if (f.type != usize)
                     continue;
                 const index = @field(i, f.name);
                 const loc = state.buffer.locations.items[index];
@@ -948,7 +1059,7 @@ fn dumpStatementsToDotImpl(state: *parser.ParseState, writer: std.fs.File.Writer
         },
         .type_decl => |i| {
             const ti = @typeInfo(@TypeOf(i)).Struct;
-            inline for (ti.fields) |f, j| {
+            inline for (ti.fields, 0..) |f, j| {
                 const index = @field(i, f.name);
                 const loc = state.buffer.locations.items[index];
                 const name = state.filebuf[loc.start..loc.end];
@@ -959,22 +1070,26 @@ fn dumpStatementsToDotImpl(state: *parser.ParseState, writer: std.fs.File.Writer
         },
         .op_decl => |i| {
             const ti = @typeInfo(@TypeOf(i)).Struct;
-            inline for (ti.fields) |f, j| {
+            inline for (ti.fields, 0..) |f, j| {
                 const index = @field(i, f.name);
-                const loc = state.buffer.locations.items[index];
-                const name = state.filebuf[loc.start..loc.end];
-                if (j > 0)
-                    writer.writeAll("\\n") catch return;
-                writer.print("{s}", .{name}) catch return;
+                if (@TypeOf(index) == usize) {
+                    const loc = state.buffer.locations.items[index];
+                    const name = state.filebuf[loc.start..loc.end];
+                    if (j > 0)
+                        writer.writeAll("\\n") catch return;
+                    writer.print("{s}", .{name}) catch return;
+                } else {
+                    writer.print("{s}", .{f.name}) catch return;
+                }
             }
         },
         .mat => |i| {
             writer.writeAll("Matrix\n") catch return;
             const ti = @typeInfo(@TypeOf(i)).Struct;
-            inline for (ti.fields) |f, j| {
+            inline for (ti.fields, 0..) |f, j| {
                 if (j > 0)
                     writer.writeAll("\\n") catch return;
-                if (f.field_type == usize) {
+                if (f.type == usize) {
                     const index = @field(i, f.name);
                     const loc = state.buffer.locations.items[index];
                     const name = state.filebuf[loc.start..loc.end];
@@ -1010,4 +1125,12 @@ fn dumpStatementsToDot(state: *parser.ParseState, filename: []const u8, statemen
     }
 
     try writer.writeAll("}\n");
+}
+
+fn strip(str: []const u8) []const u8 {
+    var i: usize = 0;
+    while (str[i] == ' ') : (i += 1) {
+        continue;
+    }
+    return str[i..];
 }
