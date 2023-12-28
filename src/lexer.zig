@@ -45,6 +45,8 @@ pub const Token = enum(u32) {
     Prod,
     Def,
     Thm,
+    Pf,
+    Func,
     LeftImp,
     RightImp,
     Eqv,
@@ -127,10 +129,10 @@ pub fn lex(allocator: std.mem.Allocator, filename: []const u8, buf: []const u8) 
         .{"op",     .Op},
         .{"prefixunaryop", .PrefixUnaryOp},
         .{"in",     .In},
-        .{"sum",    .Sum},
-        .{"prod",   .Prod},
         .{"def",    .Def},
         .{"thm",    .Thm},
+        .{"pf",     .Pf},
+        .{"func",   .Func},
     });
 
     var has_invalid_tokens = false;

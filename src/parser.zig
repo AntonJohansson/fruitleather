@@ -2,23 +2,16 @@ const std = @import("std");
 const lexer = @import("lexer.zig");
 const log = @import("log.zig");
 
-// latexString := ...
-// argList  := Identifier | Identifier "," argList
-// typeDecl := "type" Identifier "(" argList ")" ":" latexString
-// varDecl  := Identifier ":" Identifier
-// op       := Add | Sub | Mul | Div
-// opDecl   := Define op "(" varDecl "," varDecl ")" latexString
-//
-// var := Identifier | Identifier '^' Expr | Identifier '_' Expr
-
 pub const OpType = enum {
     BinaryOp,
     PrefixUnaryOp,
     PostfixUnaryOp,
+    Function,
 };
 
 pub const AstOpDecl = struct {
     op: usize,
+    identifier_presedence: ?usize = null,
     return_type: usize,
     latex_string: usize,
     type: OpType,
@@ -38,6 +31,14 @@ pub const AstMatrix = struct {
     bracket: usize,
     rows: usize,
     cols: usize,
+};
+
+pub const AstBinOpPresedence = enum {
+    Semicolon,
+    Comma,
+    Add,
+    Mul,
+    Exp,
 };
 
 pub const AstBinOp = struct {
@@ -71,6 +72,7 @@ pub const AstType = union(enum) {
     intrin: usize,
     thm: usize,
     def: usize,
+    pf: usize,
     block: usize,
 };
 
@@ -80,7 +82,7 @@ pub const AstNode = struct {
     has_newline: bool = false,
     bracketed: bool = false,
     typeindex: usize = 0,
-    children: std.BoundedArray(*AstNode, 16),
+    children: std.ArrayList(*AstNode),
 };
 
 pub const ParseError = std.mem.Allocator.Error || error {
@@ -95,6 +97,20 @@ pub const ParseState = struct {
     allocator: std.mem.Allocator,
     filebuf: []const u8,
     filename: []const u8,
+
+    identifier_ops_decl: std.ArrayList(*AstOpDecl),
+
+    pub fn loc(state: *ParseState, index: usize) lexer.TokenLocation {
+        return state.buffer.locations.items[index];
+    }
+
+    pub fn name(state: *ParseState, l: lexer.TokenLocation) []const u8 {
+        return state.filebuf[l.start..l.end];
+    }
+
+    pub fn tok(state: *ParseState, index: usize) lexer.Token {
+        return state.buffer.tokens.items[index];
+    }
 
     fn hasNTokens(state: *ParseState, N: usize) bool {
         return state.top + (N-1) < state.buffer.tokens.items.len;
@@ -122,6 +138,7 @@ pub const ParseState = struct {
                 "Expected {}, got {}",
                 .{token, t}
             );
+            std.debug.assert(false);
             return error.TokenMismatch;
         }
         return state.pop();
@@ -160,10 +177,16 @@ pub const ParseState = struct {
         return result;
     }
 
+    fn peekLocAmount(state: *ParseState, amount: usize) ParseError!lexer.TokenLocation {
+        if (!state.hasNTokens(amount))
+            return error.OutOfTokens;
+        return state.loc(state.top + (amount-1));
+    }
+
     fn peekAmount(state: *ParseState, amount: usize) ParseError!lexer.Token {
         if (!state.hasNTokens(amount))
             return error.OutOfTokens;
-        return state.buffer.tokens.items[state.top + (amount-1)];
+        return state.tok(state.top + (amount-1));
     }
 
     fn peek(state: *ParseState) ParseError!lexer.Token {
@@ -203,7 +226,7 @@ pub const ParseState = struct {
         node.has_align = false;
         node.has_newline = false;
         node.typeindex = 0;
-        node.children = try std.BoundedArray(*AstNode, 16).init(0);
+        node.children = std.ArrayList(*AstNode).init(state.allocator);
         return node;
     }
 };
@@ -218,6 +241,17 @@ pub fn parse(state: *ParseState) ParseError!std.ArrayList(*AstNode) {
         try statement_list.append(statement);
     }
     return statement_list;
+}
+
+pub fn flattenBinOpSubtree(state: *ParseState, arr: []*AstNode, index: *usize, root: *AstNode) void {
+    if (root.ast_type == .bin_op and state.tok(root.ast_type.bin_op.op) == .Comma) {
+        flattenBinOpSubtree(state, arr, index, root.children.items[0]);
+        flattenBinOpSubtree(state, arr, index, root.children.items[1]);
+    } else {
+        // leaf
+        arr[index.*] = root;
+        index.* += 1;
+    }
 }
 
 fn consumeNewline(state: *ParseState) ParseError!void {
@@ -269,13 +303,17 @@ fn parseBlock(state: *ParseState) ParseError!*AstNode {
 }
 
 fn parseHeader(state: *ParseState) ParseError!*AstNode {
-    _ = try state.expect(.Header);
+    var depth: u32 = 0;
+    while (try state.peek() == .Header) {
+        depth += 1;
+        _ = try state.pop();
+    }
     const text = try parseText(state);
 
     var node = try state.makeNode();
     node.ast_type = AstType {
         .header = AstHeader {
-            .depth = 1,
+            .depth = depth,
         },
     };
     try node.children.append(text);
@@ -297,6 +335,7 @@ fn parseIntrinsic(state: *ParseState) ParseError!*AstNode {
     switch (token) {
         .Thm => return try parseThm(state),
         .Def => return try parseDef(state),
+        .Pf  => return try parseProof(state),
         else => unreachable,
     }
 }
@@ -349,6 +388,33 @@ fn parseDef(state: *ParseState) ParseError!*AstNode {
     return node;
 }
 
+fn parseProof(state: *ParseState) ParseError!*AstNode {
+    const i = try state.expect(.Pf);
+
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .pf = i,
+    };
+
+    _ = try state.expect(.LeftParen);
+    const name = try parseIdentifier(state);
+    _ = try state.expect(.RightParen);
+    try node.children.append(name);
+
+    switch (try state.peek()) {
+        .Text => {
+            const text = try parseText(state);
+            try node.children.append(text);
+        },
+        else => {},
+    }
+
+    const body = try parseStatement(state);
+    try node.children.append(body);
+
+    return node;
+}
+
 fn parseImport(state: *ParseState) ParseError!*AstNode {
     _ = state;
     return error.TokenMismatch;
@@ -371,6 +437,7 @@ fn parseSmallCode(state: *ParseState) ParseError!*AstNode {
         .Var  => try parseVarDecl(state),
         .PrefixUnaryOp => try parsePrefixUnaryOpDecl(state),
         .Op   => try parseOpDecl(state),
+        .Func => try parseFuncDecl(state),
         else  => try parseExpression(state),
     };
     try node.children.append(code);
@@ -400,6 +467,7 @@ fn parseBigCode(state: *ParseState) ParseError!*AstNode {
             .Var  => try parseVarDecl(state),
             .PrefixUnaryOp => try parsePrefixUnaryOpDecl(state),
             .Op   => try parseOpDecl(state),
+            .Func => try parseFuncDecl(state),
             else  => try parseExpression(state),
         };
         _ = try state.expect(.Semicolon);
@@ -429,7 +497,7 @@ fn parseIdentifier(state: *ParseState) ParseError!*AstNode {
     return node;
 }
 
-fn parseBinOpExpansion(state: *ParseState, comptime op_tokens: []const lexer.Token, comptime parse_op: fn (*ParseState) ParseError!*AstNode) ParseError!*AstNode {
+fn parseBinOpExpansion(state: *ParseState, comptime op_tokens: []const lexer.Token, comptime presedence: usize, comptime parse_op: fn (*ParseState) ParseError!*AstNode) ParseError!*AstNode {
     var a = try parse_op(state);
 
     var num_bin_ops: u32 = 0;
@@ -448,8 +516,32 @@ fn parseBinOpExpansion(state: *ParseState, comptime op_tokens: []const lexer.Tok
             peek_offset += 1;
 
         const has_op = state.matchOrOffset(peek_offset, op_tokens) catch break;
-        if (!has_op)
+
+        var identifier_op = false;
+        if (!has_op and try state.peekAmount(peek_offset) == .Identifier) {
+            identifier_op = true;
+        } else if (!has_op) {
             break;
+        }
+
+        if (identifier_op) {
+            const next_iden = state.name(try state.peekLocAmount(peek_offset));
+            var found_op: ?*AstOpDecl = null;
+            for (state.identifier_ops_decl.items) |op_decl| {
+                std.debug.assert(op_decl.identifier_presedence != null);
+                if (op_decl.identifier_presedence != presedence)
+                    continue;
+                const iden = state.name(state.loc(op_decl.op));
+                if (std.mem.eql(u8, next_iden, iden)) {
+                    found_op = op_decl;
+                    break;
+                }
+            }
+
+            if (found_op == null) {
+                break;
+            }
+        }
 
         if (has_newline)
             _ = try state.pop();
@@ -483,7 +575,7 @@ fn parseBinOpExpansion(state: *ParseState, comptime op_tokens: []const lexer.Tok
 fn parseCall(state: *ParseState) ParseError!*AstNode {
     const iden = try state.pop();
     _ = try state.expect(.LeftParen);
-    const expr = try parseBinOpExpansion(state, &.{.Comma}, parseEqual);
+    const expr = try parseBinOpExpansion(state, &.{.Comma}, 6, parseEqual);
     _ = try state.expect(.RightParen);
 
     var node = try state.makeNode();
@@ -496,7 +588,7 @@ fn parseCall(state: *ParseState) ParseError!*AstNode {
 }
 
 fn parseComma(state: *ParseState) ParseError!*AstNode {
-    return try parseBinOpExpansion(state, &.{.Comma}, parseAdd);
+    return try parseBinOpExpansion(state, &.{.Comma}, 6, parseAdd);
 }
 
 pub fn getMatchingParen(state: *ParseState, index: usize) !lexer.Token {
@@ -515,11 +607,11 @@ pub fn getMatchingParen(state: *ParseState, index: usize) !lexer.Token {
 
 fn parseVectorOrMatrix(state: *ParseState) ParseError!*AstNode {
     const open_paren = try state.matchOrAndPop(&.{.LeftBracket, .LeftAngleBracket, .LeftBrace});
-    const row = try parseBinOpExpansion(state, &.{.Semicolon}, parseComma);
+    const row = try parseBinOpExpansion(state, &.{.Semicolon}, 7, parseComma);
     _ = try state.expect(try getMatchingParen(state, open_paren));
 
     const num_cols = if (row.ast_type == .bin_op) row.ast_type.bin_op.num_args_in_subtree else 1;
-    const num_rows = if (row.children.len > 1 and row.children.get(1).ast_type == .bin_op and state.buffer.tokens.items[row.children.get(1).ast_type.bin_op.op] == .Comma) row.children.get(1).ast_type.bin_op.num_args_in_subtree else 1;
+    const num_rows = if (row.children.items.len > 1 and row.children.items[1].ast_type == .bin_op and state.buffer.tokens.items[row.children.items[1].ast_type.bin_op.op] == .Comma) row.children.items[1].ast_type.bin_op.num_args_in_subtree else 1;
 
 
     var node = try state.makeNode();
@@ -531,63 +623,6 @@ fn parseVectorOrMatrix(state: *ParseState) ParseError!*AstNode {
         },
     };
     try node.children.append(row);
-
-    return node;
-}
-
-//fn parseInt(state: *ParseState) ParseError!*AstNode {
-//    const op = try state.expectOr(&.{.Int1, .Int2, .Int3, .Oint1, .Oint2, .Oint3});
-//    _ = try state.expect(.LeftParen);
-//    const arg = try parseComma(state);
-//    _ = try state.expect(.RightParen);
-//    _ = try state.expect(.LeftBrace);
-//    const exp = try parseAdd(state);
-//    _ = try state.expect(.RightBrace);
-//
-//    var node = try state.makeNode();
-//    node.ast_type = AstType {
-//        .int = op,
-//    };
-//    try node.children.append(arg);
-//    try node.children.append(exp);
-//
-//    return node;
-//}
-
-fn parseSum(state: *ParseState) ParseError!*AstNode {
-    const op = try state.expect(.Sum);
-    _ = try state.expect(.LeftParen);
-    const arg = try parseComma(state);
-    _ = try state.expect(.RightParen);
-    _ = try state.expect(.LeftBrace);
-    const exp = try parseAdd(state);
-    _ = try state.expect(.RightBrace);
-
-    var node = try state.makeNode();
-    node.ast_type = AstType {
-        .sum = op,
-    };
-    try node.children.append(arg);
-    try node.children.append(exp);
-
-    return node;
-}
-
-fn parseProd(state: *ParseState) ParseError!*AstNode {
-    const op = try state.expect(.Prod);
-    _ = try state.expect(.LeftParen);
-    const arg = try parseComma(state);
-    _ = try state.expect(.RightParen);
-    _ = try state.expect(.LeftBrace);
-    const exp = try parseAdd(state);
-    _ = try state.expect(.RightBrace);
-
-    var node = try state.makeNode();
-    node.ast_type = AstType {
-        .prod = op,
-    };
-    try node.children.append(arg);
-    try node.children.append(exp);
 
     return node;
 }
@@ -633,10 +668,6 @@ fn parsePrimary(state: *ParseState) ParseError!*AstNode {
         node = try parseAdd(state);
         _ = try state.expect(.RightParen);
         node.bracketed = true;
-    } else if (t0 == .Sum) {
-        node = try parseSum(state);
-    } else if (t0 == .Prod) {
-        node = try parseProd(state);
     } else {
         log.errAt(state.filename, state.filebuf,
             state.buffer.locations.items[state.top].start,
@@ -669,40 +700,36 @@ fn parseUnary(state: *ParseState) ParseError!*AstNode {
 }
 
 fn parsePower(state: *ParseState) ParseError!*AstNode {
-    return try parseBinOpExpansion(state, &.{.Superscript, .Subscript}, parseUnary);
+    return try parseBinOpExpansion(state, &.{.Superscript, .Subscript}, 0, parseUnary);
 }
 
 fn parseMul(state: *ParseState) ParseError!*AstNode {
-    return try parseBinOpExpansion(state, &.{.Mul, .Div, .Period}, parsePower);
+    return try parseBinOpExpansion(state, &.{.Mul, .Div, .Backslash, .Period}, 1, parsePower);
 }
 
 fn parseAdd(state: *ParseState) ParseError!*AstNode {
-    return try parseBinOpExpansion(state, &.{.Add, .Sub}, parseMul);
+    return try parseBinOpExpansion(state, &.{.Add, .Sub}, 2, parseMul);
 }
 
 fn parseIn(state: *ParseState) ParseError!*AstNode {
-    return parseBinOpExpansion(state, &.{.In}, parseAdd);
+    return parseBinOpExpansion(state, &.{.In}, 3, parseAdd);
 }
 
 fn parseEqual(state: *ParseState) ParseError!*AstNode {
-    return try parseBinOpExpansion(state, &.{.Equal, .LeftAngleBracket, .RightAngleBracket, .LessThanEqual, .GreaterThanEqual}, parseIn);
+    return try parseBinOpExpansion(state, &.{.Equal, .LeftAngleBracket, .RightAngleBracket, .LessThanEqual, .GreaterThanEqual}, 4, parseIn);
 }
 
 fn parseArrows(state: *ParseState) ParseError!*AstNode {
-    return try parseBinOpExpansion(state, &.{.RightImp, .LeftImp, .Eqv}, parseEqual);
+    return try parseBinOpExpansion(state, &.{.To, .RightImp, .LeftImp, .Eqv}, 5, parseEqual);
 }
 
 fn parseExpression(state: *ParseState) ParseError!*AstNode {
-    return try parseBinOpExpansion(state, &.{.Comma}, parseArrows);
-}
-
-fn parseArgs(state: *ParseState) ParseError!*AstNode {
-    return try parseBinOpExpansion(state, &.{.Comma}, parseIdentifier);
+    return try parseBinOpExpansion(state, &.{.Comma}, 6, parseArrows);
 }
 
 fn parseTypeDecl(state: *ParseState) ParseError!*AstNode {
     const i = try state.match(3, [_]lexer.Token{.Type, .Identifier, .LeftParen});
-    const args = try parseArgs(state);
+    const args = try parseBinOpExpansion(state, &.{.Comma}, 6, parseIdentifier);
     const j = try state.match(3, [_]lexer.Token{.RightParen, .Colon, .String});
 
     var node = try state.makeNode();
@@ -746,7 +773,7 @@ fn parseVarDecl(state: *ParseState) ParseError!*AstNode {
 }
 
 fn parseOpArgs(state: *ParseState) ParseError!*AstNode {
-    return try parseBinOpExpansion(state, &.{.Comma}, parseArgDecl);
+    return try parseBinOpExpansion(state, &.{.Comma}, 6, parseArgDecl);
 }
 
 fn parsePrefixUnaryOpDecl(state: *ParseState) ParseError!*AstNode {
@@ -775,12 +802,53 @@ fn parsePrefixUnaryOpDecl(state: *ParseState) ParseError!*AstNode {
     return node;
 }
 
+fn mapTokenToPresedence(token: lexer.Token) usize {
+    switch (token) {
+        .Superscript,
+        .Subscript
+        => return 0,
+
+        .Mul, .Div, .Period
+        => return 1,
+
+        .Add, .Sub
+        => return 2,
+
+        .In
+        => return 3,
+
+        .Equal, .LeftAngleBracket,
+        .RightAngleBracket,
+        .LessThanEqual, .GreaterThanEqual
+        => return 4,
+
+        .RightImp, .LeftImp, .Eqv
+        => return 5,
+
+        .Comma
+        => return 6,
+        .Semicolon
+        => return 7,
+
+        else => unreachable,
+    }
+}
+
 fn parseOpDecl(state: *ParseState) ParseError!*AstNode {
     _ = try state.expect(.Op);
 
-    // TODO: don't hardcode
-    //const op = try state.matchOrAndPop(&.{.Add, .Sub, .Mul, .Div, .Superscript});
+    const identifier_op = try state.peek() == .Identifier;
+
     const op = try state.pop();
+
+    var identifier_presedence: ?usize = null;
+    if (identifier_op) {
+        _ = try state.expect(.LeftBracket);
+        const presedence_op = try state.expectOr(&.{.Equal,.Add,.Sub,.Mul,.Div,.Backslash,.Superscript});
+        _ = try state.expect(.RightBracket);
+
+        identifier_presedence = mapTokenToPresedence(state.tok(presedence_op));
+    }
 
     _ = try state.expect(.LeftParen);
     const args = try parseOpArgs(state);
@@ -794,6 +862,7 @@ fn parseOpDecl(state: *ParseState) ParseError!*AstNode {
     node.ast_type = AstType {
         .op_decl = AstOpDecl {
             .op = op,
+            .identifier_presedence = identifier_presedence,
             .return_type = return_type,
             .latex_string = string,
             .type = .BinaryOp,
@@ -801,5 +870,37 @@ fn parseOpDecl(state: *ParseState) ParseError!*AstNode {
     };
     try node.children.append(args);
 
+    if (identifier_op) {
+        try state.identifier_ops_decl.append(&node.ast_type.op_decl);
+    }
+
     return node;
 }
+
+fn parseFuncDecl(state: *ParseState) ParseError!*AstNode {
+    _ = try state.expect(.Func);
+
+    const func = try state.pop();
+
+    _ = try state.expect(.LeftParen);
+    const args = try parseOpArgs(state);
+    _ = try state.expect(.RightParen);
+    _ = try state.expect(.To);
+    const return_type = try state.expect(.Identifier);
+    _ = try state.expect(.Colon);
+    const string = try state.expect(.String);
+
+    var node = try state.makeNode();
+    node.ast_type = AstType {
+        .op_decl = AstOpDecl {
+            .op = func,
+            .return_type = return_type,
+            .latex_string = string,
+            .type = .Function,
+        },
+    };
+    try node.children.append(args);
+
+    return node;
+}
+
