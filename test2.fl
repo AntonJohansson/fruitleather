@@ -1,13 +1,23 @@
 ```
-type DifferentialForm(x): "\dd{$x}";
-type DifferentialVec(x): "\dd{\vec{$x}}";
-op +(a: DifferentialForm, b: DifferentialForm) -> DifferentialForm: "";
+type DifferentialVec(x): "\dd{\vec{ ${0} }}";
 op +(a: DifferentialVec, b: DifferentialVec) -> DifferentialVec: "";
+
+type DifferentialForm(x): "\dd{ ${0} }";
+op +(a: DifferentialForm, b: DifferentialForm) -> DifferentialForm: "";
 op *(a: DifferentialForm, b: Vector) -> DifferentialVec: "";
-op _(a: Vector, b: Number) -> Vector: "";
 op ^(a: DifferentialForm, b: Number) -> DifferentialForm: "";
+
+op +(a: Vector, b: Vector) -> Vector: "";
+op _(a: Vector, b: Number) -> Vector: "";
+
 var r: DifferentialVec;
 prefixunaryop int(x: Unknown) -> Unknown: "int";
+func int(a: Unknown, b: Unknown, f: Unknown, x: Unknown) -> Vector: "\int_{${0}}^{${1}} ${2}\,\mathrm{d}${3}";
+
+type Bra(x): "\bra{${0}}";
+type Ket(x): "\ket{${0}}";
+func ket(x: Unknown) -> Ket: "";
+func bra(x: Unknown) -> Bra: "";
 ```
 
 # Hello
@@ -22,12 +32,25 @@ r = x^1*e_1 + y^2*e_2 + z^3*e_3;
 ```
 r = x^1*e_1 + y^2*e_2 + z^3*e_3;
 ```
+ajsfsa fsaf saf sdf sfds
 }
+asdfsafasf
 
 @def(test) A B C D E F
 {
     hej a  b a ba
 ```
-int r = r;
+int(a,b,f(w),w) = b;
 ```
 }
+
+```
+var d: Vector;
+a + s + d + f;
+```
+
+```
+var l: Bra;
+l;
+bra(heh);
+```

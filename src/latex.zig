@@ -64,7 +64,7 @@ pub fn emit(state: *ParseState, filename: []const u8, statements: std.ArrayList(
     try writer.writeAll("\\end{document}\n");
 }
 
-fn mapVarName(name: []const u8) []const u8 {
+fn mapVarName(name: []const u8) ?[]const u8 {
     // TODO: string switch
     if      (std.mem.eql(u8, name, "alpha")) {
         return "\\alpha";
@@ -158,7 +158,7 @@ fn mapVarName(name: []const u8) []const u8 {
         return "\\Psi";
     } else if (std.mem.eql(u8, name, "Omega")) {
         return "\\Omega";
-    } else {return name;}
+    } else {return null;}
 }
 
 fn dumpExpression(parse_state: *ParseState, writer: std.fs.File.Writer, buf: []const u8, ast_types: AstTypes, node: *AstNode, in_mat: bool, allow_in_parens: bool) std.fs.File.WriteError!void {
@@ -211,8 +211,8 @@ fn dumpExpression(parse_state: *ParseState, writer: std.fs.File.Writer, buf: []c
             try writer.print("{s}", .{text});
         },
         .var_name => {
-            const var_loc = parse_state.loc(node.ast_type.var_name);
-            const var_name: []const u8 = mapVarName(buf[var_loc.start..var_loc.end]);
+            const var_str = parse_state.name(parse_state.loc(node.ast_type.var_name));
+            const var_name: []const u8 = mapVarName(var_str) orelse var_str;
             const typeindex = node.typeindex;
             if (typeindex == 0) {
                 try writer.print("{s}", .{var_name});
@@ -425,7 +425,8 @@ fn dumpExpression(parse_state: *ParseState, writer: std.fs.File.Writer, buf: []c
             try dumpExpression(parse_state, writer, buf, ast_types, node.children.items[1], in_mat, allow_in_parens);
         },
         .call_op => |v| {
-            const op = parse_state.name(parse_state.loc(v));
+            const var_str = parse_state.name(parse_state.loc(v));
+            const var_name = mapVarName(var_str);
 
             const opinfo = ast_types.ops.get(v);
 
@@ -438,12 +439,16 @@ fn dumpExpression(parse_state: *ParseState, writer: std.fs.File.Writer, buf: []c
                 defer parse_state.allocator.free(flat_nodes);
 
                 dumpExpressionFromLatexString(parse_state, writer, opinfo.?.latex_string, buf, ast_types, flat_nodes, in_mat, allow_in_parens) catch unreachable;
-            } else if (op.len > 1) {
-                try writer.print("\\mathrm{{{s}}}(", .{op});
+            } else if (var_name != null) {
+                try writer.print("{s}(", .{var_name.?});
+                try dumpExpression(parse_state, writer, buf, ast_types, node.children.items[0], in_mat, allow_in_parens);
+                try writer.writeAll(")");
+            } else if (var_str.len > 1) {
+                try writer.print("\\mathrm{{{s}}}(", .{var_str});
                 try dumpExpression(parse_state, writer, buf, ast_types, node.children.items[0], in_mat, allow_in_parens);
                 try writer.writeAll(")");
             } else {
-                try writer.print("{s}(", .{op});
+                try writer.print("{s}(", .{var_str});
                 try dumpExpression(parse_state, writer, buf, ast_types, node.children.items[0], in_mat, allow_in_parens);
                 try writer.writeAll(")");
             }

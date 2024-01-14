@@ -1,17 +1,19 @@
 [ ] Deal with To and Colon as binary operators
-[ ] binary operators of different return type
+[x] binary operators of different return type
     - op *(a: DifferentialForm, b: DifferentialForm) -> DifferentialNForm
 [x] integrals
-[ ] sqrt
+[x] sqrt
 [x] Deal with greek letters
-[ ] custom function(al) like expressions sum/prod/int, define in language instead?
-[ ] custom binary operators?
-    - Define +-*/^_ in language?
+[x] custom function(al) like expressions sum/prod/int, define in language instead?
+[x] custom binary operators?
 [x] newline and alignment in equations
 [ ] labeling equations
-[ ] proof/theorem/remark
-[ ] images?
-[ ] tables?
+[x] Definitiosn
+[x] Theorem
+[ ] Proof
+[ ] Remark
+[ ] Images
+[ ] Tables
 [ ] period/comma after equations
 
 [x] allow definition of return type of operations
@@ -19,8 +21,44 @@
 [x] dont have comments in ast??
 [x] copy bracketing from input code
 [x] why dont types typeset correctly?
-[ ] custom operator character
 [x] propagate types down ast
 [ ] references
 [ ] custom prefix unary operators
 [ ] custom postfix unary operators
+
+[x] ## for nested headers
+[x] No spacing between text
+[ ] Use of _ in func names
+[x] functions with less than 2 variables 
+[x] functions with more than 2 variables 
+[ ] nested functions break a(1, b(2,3))
+    [ ] Use a(b_c,1) also breaks
+[ ] scoping
+[ ] big blocks with only func def in @def => empty begin{align}
+[ ] Stack overflow on parse of large expression in @def
+[ ] Define set operatorations
+    - in
+    - subset
+    - subseteq
+
+[ ] remove ``` vs ` and interpret big vs small instead
+
+[ ] Vector graphics
+
+[ ] Fix:
+      func D2(x: Unknown) -> Unknown: "\ddot{${0}}";
+      F_2 = x*theta(t) = I*D2(theta)(t);
+
+    - (t) on returntype
+    - theta(t) doesn't map to "greek letter"(t)
+
+[ ] Map parenthesis to \left( \right)
+
+[ ] Make intrinsic tokens include @?
+[ ] Handle tokens in variable names in non code envs.
+[ ] @ex
+[ ] @ref
+[ ] Save types applied to subexpressions
+
+[ ] !=
+[ ] delta_p(s)

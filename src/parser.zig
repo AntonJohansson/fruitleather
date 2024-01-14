@@ -54,6 +54,9 @@ pub const AstCode = struct {
     small: bool,
 };
 
+pub const AstIden = struct {
+};
+
 pub const AstType = union(enum) {
     var_name: usize,
     number: usize,

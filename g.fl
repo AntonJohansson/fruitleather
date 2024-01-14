@@ -1,0 +1,32 @@
+# Gravity rotational thing
+
+
+```
+func D2(x: Unknown) -> Unknown: "\ddot{${0}}";
+func d(x: Unknown) -> Unknown: "\Delta ${0}";
+func sqrt(x: Unknown) -> Unknown: "\sqrt{${0}}";
+```
+
+```
+F_1 = GmM/d(theta)^2;
+tau_1 = F_1*l;
+```
+
+```
+F_2 = k*theta &= I*D2(theta) = ((l/2)^2*m + (l/2)^2*m)*D2(theta) \
+<=> k*theta &= l^2/2 * m * D2(theta) \
+==> theta &= A*cos(sqrt(2*k/(m*l^2))*t);
+tau_2 = F_2*l;
+```
+
+```
+sqrt(2*k/(m*l^2))*T = 2*pi 
+==> T = sqrt(2*pi^2*m*l^2/(k))
+==> k = 2*pi^2*m*l^2/T^2;
+```
+
+```
+tau_1*l = tau_2*l <=> tau_1 &= tau_2 \
+<=> GmM/d(theta)^2 &= k*d(theta) \
+<=> d(theta)^3 = (G*M*T^2)/(2*pi^2*l^2);
+```
