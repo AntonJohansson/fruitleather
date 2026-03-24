@@ -1,0 +1,97 @@
+# Structures
+
+* Sets
+    * Order- and amount-indepent collection of different items
+* Semigroup
+    * Set S with *(S,S) -> S
+        * associative: (a*b)*c = a*(b*c)
+* Monoid
+    * Semigroup
+        * identity: 1*a = a*1 = a
+* Groups (symmetries)
+    * Monoid
+        * inverse:     a*a^-1 = 1
+        * "abelian"    a*b = b*a
+* Rings (polynomial)
+    * Set S with +(S,S) -> S and *(S,S) -> S
+        * S abelian group under +
+        * S monoid under *
+        * distributive: a*(b+c) = (a*b) + (a*c)
+                        (b+c)*a = (b*a) + (c*a)
+        * "commutative": a*b = b*a
+* Fields
+    * Set S with a binary operators +(S,S) -> S and *(S,S) -> S
+        * S abelian group under +
+        * S\0 abelian group under *
+        * distributive: a*(b+c) = (a*b) + (a*c)
+                        (b+c)*a = (b*a) + (c*a)
+* Spaces
+    * Vector
+        * Abelian group V and field F, *(F,V) -> V
+            * f*v in V
+            * f*(v + w) = f*v + f*w
+            * (f+g)*v = f*v + g*v
+            * 1*v = v
+            * f*(g*v) = (f*g)*v
+    * Topological 
+        * Set X along with collection of subsets T called a topology
+            * elements of T are called open sets
+            * T closed under infinite union
+            * T closed under finite intersection
+            * {}, X in T
+    * Metric 
+        * Set X with function d: (X,X) -> R
+            * d(x,x) = 0
+            * positivity: x != y => d(x,y) > 0
+            * symmetry:   d(x,y) = d(y,x)
+            * triangle inequality: d(x,y) <= d(x,z) + d(z,y)
+            * induces topolopy consisting of unions of open balls
+    * Normed 
+        * Vector space V with function ||.|| -> R
+            * non-negativity: ||x|| >= 0
+            * positive definite: ||x|| = 0 <=> x = 0
+            * absolute homogeneity: ||f*x|| = |f|*||x||
+            * triangle inequality: ||x+y|| <= ||x|| + ||y||
+            * induces metric d(x,y) = ||x - y||
+    * Banach 
+        * Complete normed space with respect to induced metric
+    * Inner product spaces
+        * Vector space V with (V,V) -> F
+            * linearity in 1st: (f*v + g*w,u) = f*(v,u) + g*(w,u)
+            * conjugate symmetry: (v,w) = (w, v)
+            * positive definite: (v,v) = 0 <=> v = 0
+                * (v,v) is real since (v,v) = conj (v,v)
+            * induces norm ||v|| = (v,v)
+    * Hilbert
+        * Complete inner product space with respect to induced metric
+    * Measure 
+        * (X,A,mu)
+    * Lp
+        * Banach space of measurable functions
+            * ||f||p := (int_S |f|^p dmu)^(1/p) < inf
+    * Sobolev
+    * Hardy
+* Modules
+    * Vector space over ring
+* Algebras
+    * Vector space A with *(A,A) -> A
+        * (v+w)*u = v*u + w*u
+        * v*(w+u) = v*w + v*u
+        * (f*v) * (g*w) = (f*g) * (v*w)
+        * "associative": v*(w*u) = (v*w)*u
+* Sigma algebra
+    * Set of subsets S sub P(X)
+        * X in S
+        * A in S => X\A in S
+        * countable Ai in S => U Ai in S
+* Measure space
+    * (X,A,mu), X set, A sigma algebra, mu 
+        * Ai n Aj = {} => mu(U Ai) = sum mu(Ai)
+        * mu({}) = 0
+        * mu(Ai) >= 0
+* Measurable function
+    * A function between measurable spaces f: (X,A) -> (Y,B)
+        * E in B, f^-1(E) = {x in X | f(x) in E} in A
+        * "maps measurable sets to measurable sets"
+
+
